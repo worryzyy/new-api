@@ -96,8 +96,23 @@ var defaultCreateCacheRatio = map[string]float64{
 
 //var defaultCreateCacheRatio = map[string]float64{}
 
+// defaultCreateCacheRatio1h stores the default 1h cache creation ratios.
+// When set, these take priority over the auto-calculated value (5m × 1.6).
+var defaultCreateCacheRatio1h = map[string]float64{}
+
 var cacheRatioMap = types.NewRWMap[string, float64]()
 var createCacheRatioMap = types.NewRWMap[string, float64]()
+var createCacheRatio1hMap = types.NewRWMap[string, float64]()
+
+// createCacheTokenTypeMap overrides the cache creation token type for billing.
+// Values: "5m" or "1h". If set, all cache creation tokens for that model are
+// billed as the specified type regardless of what upstream actually returns.
+var createCacheTokenTypeMap = types.NewRWMap[string, string]()
+
+// globalCreateCacheTokenType is the global fallback override for all Claude models.
+// Values: "" (disabled), "5m", "1h".
+// Per-model JSON (createCacheTokenTypeMap) takes priority over this.
+var globalCreateCacheTokenType = ""
 
 // GetCacheRatioMap returns a copy of the cache ratio map
 func GetCacheRatioMap() map[string]float64 {
@@ -147,4 +162,78 @@ func GetCacheRatioCopy() map[string]float64 {
 
 func GetCreateCacheRatioCopy() map[string]float64 {
 	return createCacheRatioMap.ReadAll()
+}
+
+// CreateCacheRatio1h2JSONString converts the 1h create cache ratio map to a JSON string
+func CreateCacheRatio1h2JSONString() string {
+	return createCacheRatio1hMap.MarshalJSONString()
+}
+
+// UpdateCreateCacheRatio1hByJSONString updates the 1h create cache ratio map from a JSON string
+func UpdateCreateCacheRatio1hByJSONString(jsonStr string) error {
+	return types.LoadFromJsonStringWithCallback(createCacheRatio1hMap, jsonStr, InvalidateExposedDataCache)
+}
+
+// GetCreateCacheRatio1h returns the 1h cache creation ratio for a model.
+// Returns (ratio, true) if found, (0, false) if not found.
+func GetCreateCacheRatio1h(name string) (float64, bool) {
+	return createCacheRatio1hMap.Get(name)
+}
+
+func GetCreateCacheRatio1hCopy() map[string]float64 {
+	return createCacheRatio1hMap.ReadAll()
+}
+
+// CreateCacheTokenType2JSONString converts the cache creation token type map to a JSON string
+func CreateCacheTokenType2JSONString() string {
+	return createCacheTokenTypeMap.MarshalJSONString()
+}
+
+// UpdateCreateCacheTokenTypeByJSONString updates the cache creation token type map from a JSON string
+func UpdateCreateCacheTokenTypeByJSONString(jsonStr string) error {
+	return types.LoadFromJsonStringWithCallback(createCacheTokenTypeMap, jsonStr, InvalidateExposedDataCache)
+}
+
+// GetCreateCacheTokenType returns the forced token type ("5m" or "1h") for a model.
+// Returns ("", false) if no override is configured for that model.
+func GetCreateCacheTokenType(name string) (string, bool) {
+	v, ok := createCacheTokenTypeMap.Get(name)
+	if !ok || (v != "5m" && v != "1h") {
+		return "", false
+	}
+	return v, true
+}
+
+func GetCreateCacheTokenTypeCopy() map[string]string {
+	return createCacheTokenTypeMap.ReadAll()
+}
+
+// GetGlobalCreateCacheTokenType returns the global cache creation token type override.
+// Returns "" if disabled.
+func GetGlobalCreateCacheTokenType() string {
+	return globalCreateCacheTokenType
+}
+
+// SetGlobalCreateCacheTokenType sets the global cache creation token type override.
+func SetGlobalCreateCacheTokenType(v string) {
+	if v == "5m" || v == "1h" {
+		globalCreateCacheTokenType = v
+	} else {
+		globalCreateCacheTokenType = ""
+	}
+}
+
+// GetEffectiveCreateCacheTokenType returns the effective token type for a model,
+// checking per-model override first, then global setting.
+// Returns ("", false) if neither is configured.
+func GetEffectiveCreateCacheTokenType(name string) (string, bool) {
+	// Per-model JSON takes priority
+	if v, ok := GetCreateCacheTokenType(name); ok {
+		return v, true
+	}
+	// Fall back to global setting
+	if globalCreateCacheTokenType != "" {
+		return globalCreateCacheTokenType, true
+	}
+	return "", false
 }

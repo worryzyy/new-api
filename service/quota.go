@@ -272,6 +272,29 @@ func PostClaudeConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, 
 		promptTokens -= cacheCreationTokens
 	}
 
+	// Apply cache creation token type override: force all creation tokens to be billed
+	// as a specific type ("5m" or "1h") regardless of what upstream actually reported.
+	// Per-model JSON takes priority; global setting is the fallback.
+	if tokenType, ok := ratio_setting.GetEffectiveCreateCacheTokenType(modelName); ok {
+		total := cacheCreationTokens5m + cacheCreationTokens1h
+		if remainder := cacheCreationTokens - cacheCreationTokens5m - cacheCreationTokens1h; remainder > 0 {
+			total += remainder
+		}
+		if total == 0 {
+			total = cacheCreationTokens
+		}
+		switch tokenType {
+		case "1h":
+			cacheCreationTokens1h = total
+			cacheCreationTokens5m = 0
+			cacheCreationTokens = total
+		case "5m":
+			cacheCreationTokens5m = total
+			cacheCreationTokens1h = 0
+			cacheCreationTokens = total
+		}
+	}
+
 	calculateQuota := 0.0
 	if !relayInfo.PriceData.UsePrice {
 		calculateQuota = float64(promptTokens)

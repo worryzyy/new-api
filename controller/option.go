@@ -178,6 +178,24 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "CreateCacheRatio1h":
+		err = ratio_setting.UpdateCreateCacheRatio1hByJSONString(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "1h缓存创建倍率设置失败: " + err.Error(),
+			})
+			return
+		}
+	case "CreateCacheTokenType":
+		err = ratio_setting.UpdateCreateCacheTokenTypeByJSONString(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "缓存创建计费类型设置失败: " + err.Error(),
+			})
+			return
+		}
 	case "ModelRequestRateLimitGroup":
 		err = setting.CheckModelRequestRateLimitGroup(option.Value.(string))
 		if err != nil {

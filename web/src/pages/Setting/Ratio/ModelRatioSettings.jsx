@@ -24,6 +24,7 @@ import {
   Form,
   Popconfirm,
   Row,
+  Select,
   Space,
   Spin,
 } from '@douyinfe/semi-ui';
@@ -37,19 +38,24 @@ import {
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 
+const defaultInputs = {
+  ModelPrice: '',
+  ModelRatio: '',
+  CacheRatio: '',
+  CreateCacheRatio: '',
+  CreateCacheRatio1h: '',
+  GlobalCreateCacheTokenType: '',
+  CreateCacheTokenType: '',
+  CompletionRatio: '',
+  ImageRatio: '',
+  AudioRatio: '',
+  AudioCompletionRatio: '',
+  ExposeRatioEnabled: false,
+};
+
 export default function ModelRatioSettings(props) {
   const [loading, setLoading] = useState(false);
-  const [inputs, setInputs] = useState({
-    ModelPrice: '',
-    ModelRatio: '',
-    CacheRatio: '',
-    CreateCacheRatio: '',
-    CompletionRatio: '',
-    ImageRatio: '',
-    AudioRatio: '',
-    AudioCompletionRatio: '',
-    ExposeRatioEnabled: false,
-  });
+  const [inputs, setInputs] = useState(defaultInputs);
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
   const { t } = useTranslation();
@@ -123,9 +129,9 @@ export default function ModelRatioSettings(props) {
   }
 
   useEffect(() => {
-    const currentInputs = {};
+    const currentInputs = { ...defaultInputs };
     for (let key in props.options) {
-      if (Object.keys(inputs).includes(key)) {
+      if (Object.keys(defaultInputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
     }
@@ -206,7 +212,7 @@ export default function ModelRatioSettings(props) {
             <Form.TextArea
               label={t('缓存创建倍率')}
               extraText={t(
-                '默认为 5m 缓存创建倍率；1h 缓存创建倍率按固定乘法自动计算（当前为 1.6x）',
+                '默认为 5m 缓存创建倍率；如未单独配置 1h 倍率，则按 5m × 1.6 自动计算',
               )}
               placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
               field={'CreateCacheRatio'}
@@ -221,6 +227,75 @@ export default function ModelRatioSettings(props) {
               ]}
               onChange={(value) =>
                 setInputs({ ...inputs, CreateCacheRatio: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('1h 缓存创建倍率')}
+              extraText={t(
+                '独立配置 1h 缓存创建倍率；留空则 fallback 到 5m 倍率 × 1.6',
+              )}
+              placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
+              field={'CreateCacheRatio1h'}
+              autosize={{ minRows: 6, maxRows: 12 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => !value || verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, CreateCacheRatio1h: value })
+              }
+            />
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.Select
+              label={t('全局缓存创建计费类型')}
+              extraText={t(
+                '对所有 Claude 模型生效。优先级低于下方的"按模型单独配置"。选"不覆盖"则按上游实际类型计费。',
+              )}
+              field={'GlobalCreateCacheTokenType'}
+              style={{ width: 240 }}
+              onChange={(value) =>
+                setInputs({ ...inputs, GlobalCreateCacheTokenType: value ?? '' })
+              }
+            >
+              <Select.Option value=''>{t('不覆盖（按上游实际类型）')}</Select.Option>
+              <Select.Option value='5m'>{t('全部按 5m 计费')}</Select.Option>
+              <Select.Option value='1h'>{t('全部按 1h 计费')}</Select.Option>
+            </Form.Select>
+          </Col>
+        </Row>
+        <Row gutter={16}>
+          <Col xs={24} sm={16}>
+            <Form.TextArea
+              label={t('缓存创建计费类型强制覆盖（按模型单独配置）')}
+              extraText={t(
+                '强制将该模型所有缓存创建 token 按指定类型计费，无论上游实际返回 5m 还是 1h。值填 "5m" 或 "1h"，日志也会显示强制后的类型。留空则按上游实际类型计费。',
+              )}
+              placeholder={t(
+                '例如：{"claude-3-5-sonnet-20241022": "1h", "claude-3-opus-20240229": "5m"}',
+              )}
+              field={'CreateCacheTokenType'}
+              autosize={{ minRows: 4, maxRows: 8 }}
+              trigger='blur'
+              stopValidateWithError
+              rules={[
+                {
+                  validator: (rule, value) => !value || verifyJSON(value),
+                  message: '不是合法的 JSON 字符串',
+                },
+              ]}
+              onChange={(value) =>
+                setInputs({ ...inputs, CreateCacheTokenType: value })
               }
             />
           </Col>
