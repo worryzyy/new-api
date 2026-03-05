@@ -78,6 +78,8 @@ const TopUp = () => {
   const [payMethods, setPayMethods] = useState([]);
 
   const affFetchedRef = useRef(false);
+  // Ref to the active discount-polling interval (null when not polling).
+  const discountPollingRef = useRef(null);
 
   // 邀请相关状态
   const [affLink, setAffLink] = useState('');
@@ -104,6 +106,8 @@ const TopUp = () => {
     amount_options: [],
     discount: {},
   });
+  // 用户邀请折扣 (0 < v < 1 表示有折扣，1 表示无折扣)
+  const [userDiscount, setUserDiscount] = useState(1.0);
 
   const topUp = async () => {
     if (redemptionCode === '') {
@@ -140,6 +144,44 @@ const TopUp = () => {
       setIsSubmitting(false);
     }
   };
+
+  // --- Discount polling helpers ---
+  // Polls /api/user/topup/info every 3 s until the backend confirms the
+  // payment (topup_discount cleared to 0 by webhook / admin complete).
+  const stopDiscountPolling = () => {
+    if (discountPollingRef.current) {
+      clearInterval(discountPollingRef.current);
+      discountPollingRef.current = null;
+    }
+  };
+
+  const startDiscountPolling = () => {
+    stopDiscountPolling();
+    let attempts = 0;
+    const maxAttempts = 40; // ~2 min at 3 s intervals
+    discountPollingRef.current = setInterval(async () => {
+      attempts++;
+      if (attempts >= maxAttempts) {
+        stopDiscountPolling();
+        return;
+      }
+      try {
+        const res = await API.get('/api/user/topup/info');
+        if (res.data?.success) {
+          const ud = parseFloat(res.data.data.user_discount);
+          const newDiscount = ud > 0 && ud < 1 ? ud : 1.0;
+          setUserDiscount(newDiscount);
+          if (newDiscount >= 1.0) {
+            stopDiscountPolling();
+            getUserQuota();
+          }
+        }
+      } catch (e) {
+        // ignore transient errors
+      }
+    }, 3000);
+  };
+  // ---------------------------------
 
   const openTopUpLink = () => {
     if (!topUpLink) {
@@ -220,6 +262,9 @@ const TopUp = () => {
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
+          // Start polling so the banner disappears as soon as the backend
+          // confirms the payment (webhook received or admin manual complete).
+          startDiscountPolling();
           if (payWay === 'stripe') {
             // Stripe 支付回调处理
             window.open(data.pay_link, '_blank');
@@ -292,6 +337,8 @@ const TopUp = () => {
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
+          // Same: poll until payment is confirmed by backend.
+          startDiscountPolling();
           processCreemCallback(data);
         } else {
           const errorMsg =
@@ -390,6 +437,10 @@ const TopUp = () => {
           amount_options: data.amount_options || [],
           discount: data.discount || {},
         });
+
+        // 存储用户专属折扣（通过邀请码注册获得）
+        const ud = parseFloat(data.user_discount);
+        setUserDiscount(ud > 0 && ud < 1 ? ud : 1.0);
 
         // 处理支付方式
         let payMethods = data.pay_methods || [];
@@ -548,6 +599,36 @@ const TopUp = () => {
     getTopupInfo().then();
     getSubscriptionPlans().then();
     getSubscriptionSelf().then();
+  }, []);
+
+  // Stop polling when the component unmounts.
+  useEffect(() => {
+    return () => stopDiscountPolling();
+  }, []);
+
+  // When the user switches back to this tab from the payment tab, immediately
+  // re-check the discount state so the banner updates without waiting for the
+  // next polling tick.
+  useEffect(() => {
+    const handleFocus = async () => {
+      if (discountPollingRef.current === null) return;
+      try {
+        const res = await API.get('/api/user/topup/info');
+        if (res.data?.success) {
+          const ud = parseFloat(res.data.data.user_discount);
+          const newDiscount = ud > 0 && ud < 1 ? ud : 1.0;
+          setUserDiscount(newDiscount);
+          if (newDiscount >= 1.0) {
+            stopDiscountPolling();
+            getUserQuota();
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
   useEffect(() => {
@@ -767,6 +848,7 @@ const TopUp = () => {
           renderQuota={renderQuota}
           statusLoading={statusLoading}
           topupInfo={topupInfo}
+          userDiscount={userDiscount}
           onOpenHistory={handleOpenHistory}
           subscriptionLoading={subscriptionLoading}
           subscriptionPlans={subscriptionPlans}

@@ -94,6 +94,7 @@ const RechargeCard = ({
   activeSubscriptions = [],
   allSubscriptions = [],
   reloadSubscriptionSelf,
+  userDiscount = 1.0,
 }) => {
   const onlineFormApiRef = useRef(null);
   const redeemFormApiRef = useRef(null);
@@ -117,6 +118,18 @@ const RechargeCard = ({
   }, [shouldShowSubscription, activeTab]);
   const topupContent = (
     <Space vertical style={{ width: '100%' }}>
+      {/* 邀请折扣提示 */}
+      {userDiscount > 0 && userDiscount < 1 && (
+        <Banner
+          type='success'
+          icon={<IconGift />}
+          description={t('您通过邀请链接注册，首次充值享受专属 {{pct}}% 优惠折扣', {
+            pct: ((1 - userDiscount) * 100).toFixed(0),
+          })}
+          closeIcon={null}
+          className='!rounded-xl'
+        />
+      )}
       {/* 统计数据 */}
       <Card
         className='!rounded-xl w-full'

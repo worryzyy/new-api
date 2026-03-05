@@ -90,6 +90,10 @@ func Recharge(referenceId string, customerId string) (err error) {
 		if err != nil {
 			return err
 		}
+		// clear promo discount after first successful topup
+		if clrErr := tx.Model(&User{}).Where("id = ?", topUp.UserId).UpdateColumn("topup_discount", 0).Error; clrErr != nil {
+			common.SysError("failed to clear topup discount: " + clrErr.Error())
+		}
 
 		return nil
 	})
@@ -292,6 +296,10 @@ func ManualCompleteTopUp(tradeNo string) error {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
+		// clear promo discount after first successful topup
+		if clrErr := tx.Model(&User{}).Where("id = ?", topUp.UserId).UpdateColumn("topup_discount", 0).Error; clrErr != nil {
+			common.SysError("failed to clear topup discount: " + clrErr.Error())
+		}
 
 		userId = topUp.UserId
 		payMoney = topUp.Money
@@ -362,6 +370,10 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(updateFields).Error
 		if err != nil {
 			return err
+		}
+		// clear promo discount after first successful topup
+		if clrErr := tx.Model(&User{}).Where("id = ?", topUp.UserId).UpdateColumn("topup_discount", 0).Error; clrErr != nil {
+			common.SysError("failed to clear topup discount: " + clrErr.Error())
 		}
 
 		return nil

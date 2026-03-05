@@ -168,7 +168,19 @@ func Register(c *gin.Context) {
 		return
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	inviterId := 0
+
+	// Promo codes (admin-defined) take precedence over user aff codes.
+	// Do a single lookup here; if it's a promo code we skip the user aff_code
+	// lookup and apply the promo benefit after the user is created.
+	var promoToApply *model.PromoCode
+	if affCode != "" {
+		if pc, err := model.GetPromoCodeByCode(affCode); err == nil {
+			promoToApply = pc
+		} else {
+			inviterId, _ = model.GetUserIdByAffCode(affCode)
+		}
+	}
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
@@ -189,6 +201,13 @@ func Register(c *gin.Context) {
 	if err := model.DB.Where("username = ?", cleanUser.Username).First(&insertedUser).Error; err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserRegisterFailed)
 		return
+	}
+
+	// Apply admin promo code benefit (quota or topup discount) if one was matched.
+	if promoToApply != nil {
+		if _, err := model.ApplyFetchedPromoCode(promoToApply, insertedUser.Id); err != nil {
+			common.SysLog(fmt.Sprintf("failed to apply promo code for user %d: %v", insertedUser.Id, err))
+		}
 	}
 	// 生成默认令牌
 	if constant.GenerateDefaultToken {

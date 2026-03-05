@@ -48,6 +48,9 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
+	userId := c.GetInt("id")
+	userDiscount := model.GetUserTopupDiscount(userId)
+
 	data := gin.H{
 		"enable_online_topup": operation_setting.PayAddress != "" && operation_setting.EpayId != "" && operation_setting.EpayKey != "",
 		"enable_stripe_topup": setting.StripeApiSecret != "" && setting.StripeWebhookSecret != "" && setting.StripePriceId != "",
@@ -58,6 +61,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"stripe_min_topup":    setting.StripeMinTopUp,
 		"amount_options":      operation_setting.GetPaymentSetting().AmountOptions,
 		"discount":            operation_setting.GetPaymentSetting().AmountDiscount,
+		"user_discount":       userDiscount,
 	}
 	common.ApiSuccess(c, data)
 }
@@ -85,9 +89,9 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
-func getPayMoney(amount int64, group string) float64 {
+func getPayMoney(amount int64, group string, userDiscount float64) float64 {
 	dAmount := decimal.NewFromInt(amount)
-	// 充值金额以“展示类型”为准：
+	// 充值金额以”展示类型”为准：
 	// - USD/CNY: 前端传 amount 为金额单位；TOKENS: 前端传 tokens，需要换成 USD 金额
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
@@ -101,16 +105,25 @@ func getPayMoney(amount int64, group string) float64 {
 
 	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
 	dPrice := decimal.NewFromFloat(operation_setting.Price)
-	// apply optional preset discount by the original request amount (if configured), default 1.0
+
+	// Per-user promo discount takes priority over the site-wide amount discount.
+	// If a promo discount is active, skip the platform amount discount entirely.
+	if userDiscount <= 0 || userDiscount >= 1 {
+		userDiscount = 1.0
+	}
 	discount := 1.0
-	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
-		if ds > 0 {
-			discount = ds
+	if userDiscount == 1.0 {
+		// No promo discount — apply site-wide amount discount if configured.
+		if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
+			if ds > 0 {
+				discount = ds
+			}
 		}
 	}
 	dDiscount := decimal.NewFromFloat(discount)
+	dUserDiscount := decimal.NewFromFloat(userDiscount)
 
-	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount)
+	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount).Mul(dUserDiscount)
 
 	return payMoney.InexactFloat64()
 }
@@ -143,7 +156,7 @@ func RequestEpay(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "error", "data": "获取用户分组失败"})
 		return
 	}
-	payMoney := getPayMoney(req.Amount, group)
+	payMoney := getPayMoney(req.Amount, group, model.GetUserTopupDiscount(id))
 	if payMoney < 0.01 {
 		c.JSON(200, gin.H{"message": "error", "data": "充值金额过低"})
 		return
@@ -305,6 +318,10 @@ func EpayNotify(c *gin.Context) {
 				return
 			}
 			log.Printf("易支付回调更新用户成功 %v", topUp)
+			// clear promo discount after first successful topup (non-fatal)
+			if clrErr := model.ClearUserTopupDiscount(topUp.UserId); clrErr != nil {
+				log.Printf("易支付回调清除用户折扣失败 userId=%d: %v", topUp.UserId, clrErr)
+			}
 			model.RecordLog(topUp.UserId, model.LogTypeTopup, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money))
 		}
 	} else {
@@ -330,7 +347,7 @@ func RequestAmount(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "error", "data": "获取用户分组失败"})
 		return
 	}
-	payMoney := getPayMoney(req.Amount, group)
+	payMoney := getPayMoney(req.Amount, group, model.GetUserTopupDiscount(id))
 	if payMoney <= 0.01 {
 		c.JSON(200, gin.H{"message": "error", "data": "充值金额过低"})
 		return
