@@ -440,6 +440,15 @@ func UpdateCompletionRatioByJSONString(jsonStr string) error {
 	return types.LoadFromJsonStringWithCallback(completionRatioMap, jsonStr, InvalidateExposedDataCache)
 }
 
+// allowOverrideCompletionRatio lets operators opt out of the hardcoded
+// "official" completion ratio lock. When enabled, an administrator-configured
+// ratio in completionRatioMap takes precedence over the hardcoded value, and
+// the UI receives Locked=false so the input stays editable.
+//
+// Default is false, preserving the safety-net behavior: admins cannot
+// accidentally misconfigure well-known official ratios.
+var allowOverrideCompletionRatio = common.GetEnvOrDefaultBool("ALLOW_OVERRIDE_COMPLETION_RATIO", false)
+
 func GetCompletionRatio(name string) float64 {
 	name = FormatMatchingModelName(name)
 
@@ -448,8 +457,8 @@ func GetCompletionRatio(name string) float64 {
 			return ratio
 		}
 	}
-	hardCodedRatio, contain := getHardcodedCompletionModelRatio(name)
-	if contain {
+	hardCodedRatio, locked := getHardcodedCompletionModelRatio(name)
+	if locked && !allowOverrideCompletionRatio {
 		return hardCodedRatio
 	}
 	if ratio, ok := completionRatioMap.Get(name); ok {
@@ -476,7 +485,7 @@ func GetCompletionRatioInfo(name string) CompletionRatioInfo {
 	}
 
 	hardCodedRatio, locked := getHardcodedCompletionModelRatio(name)
-	if locked {
+	if locked && !allowOverrideCompletionRatio {
 		return CompletionRatioInfo{
 			Ratio:  hardCodedRatio,
 			Locked: true,
