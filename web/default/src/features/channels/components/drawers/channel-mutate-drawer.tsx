@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import {
   type ReactNode,
   useEffect,
@@ -59,6 +77,7 @@ import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -80,6 +99,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+  sideDrawerSectionClassName,
+  sideDrawerSwitchItemClassName,
+} from '@/components/drawer-layout'
 import { JsonEditor } from '@/components/json-editor'
 import { MultiSelect } from '@/components/multi-select'
 import {
@@ -250,9 +277,9 @@ function formatUnixTime(timestamp: unknown): string {
 
 function CardHeading({ title, icon }: { title: string; icon?: ReactNode }) {
   return (
-    <div className='flex items-center gap-2.5'>
+    <div className='flex items-center gap-3'>
       {icon && (
-        <span className='bg-primary/10 text-primary flex h-8 w-8 items-center justify-center rounded-lg'>
+        <span className='bg-muted text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-md'>
           {icon}
         </span>
       )}
@@ -282,7 +309,6 @@ export function ChannelMutateDrawer({
   const { setOpen } = useChannels()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [customModel, setCustomModel] = useState('')
-  const [isFetchingModels, setIsFetchingModels] = useState(false)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
@@ -375,6 +401,7 @@ export function ChannelMutateDrawer({
   const currentType = form.watch('type')
   const currentBaseUrl = form.watch('base_url')
   const currentModels = form.watch('models')
+  const currentName = form.watch('name')
   const currentModelMapping = form.watch('model_mapping')
   const awsKeyType = form.watch('aws_key_type')
   const upstreamModelUpdateCheckEnabled = form.watch(
@@ -679,7 +706,7 @@ export function ChannelMutateDrawer({
     try {
       const res = await getChannelKey(channelId)
       if (!res.success) {
-        throw new Error(res.message || 'Failed to fetch channel key')
+        throw new Error(res.message || t('Failed to fetch channel key'))
       }
 
       const keyValue = res.data?.key ?? ''
@@ -714,7 +741,7 @@ export function ChannelMutateDrawer({
     try {
       const res = await refreshCodexCredential(channelId)
       if (!res.success) {
-        throw new Error(res.message || 'Failed to refresh credential')
+        throw new Error(res.message || t('Failed to refresh credential'))
       }
       toast.success(t('Credential refreshed'))
       queryClient.invalidateQueries({
@@ -748,43 +775,29 @@ export function ChannelMutateDrawer({
       return
     }
 
-    // For editing mode, open FetchModelsDialog to let user select
-    if (isEditing && currentRow) {
-      setFetchModelsDialogOpen(true)
-      return
-    }
-
-    // For creation mode, fetch and fill all models
-    const key = form.getValues('key')
-    if (!key?.trim()) {
-      toast.error(t('Please enter API key first'))
-      return
-    }
-
-    setIsFetchingModels(true)
-    try {
-      const response = await fetchModels({
-        type,
-        key,
-        base_url: form.getValues('base_url') || '',
-      })
-
-      if (response.success && response.data) {
-        updateModels(response.data, true)
-        toast.success(
-          t('Fetched {{count}} model(s) from upstream', {
-            count: response.data.length,
-          })
-        )
-      } else {
-        toast.error(t('No models fetched from upstream'))
+    // For creation mode, validate key before opening dialog
+    if (!isEditing) {
+      const key = form.getValues('key')
+      if (!key?.trim()) {
+        toast.error(t('Please enter API key first'))
+        return
       }
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error) || t('Failed to fetch models'))
-    } finally {
-      setIsFetchingModels(false)
     }
-  }, [isEditing, currentRow, form, t, updateModels])
+
+    setFetchModelsDialogOpen(true)
+  }, [isEditing, form, t])
+
+  const createModeFetcher = useCallback(async (): Promise<string[]> => {
+    const response = await fetchModels({
+      type: form.getValues('type'),
+      key: form.getValues('key'),
+      base_url: form.getValues('base_url') || '',
+    })
+    if (response.success && response.data) {
+      return response.data
+    }
+    throw new Error(response.message || 'No models fetched from upstream')
+  }, [form])
 
   // Handle adding custom models
   const handleAddCustomModels = useCallback(() => {
@@ -1082,10 +1095,10 @@ export function ChannelMutateDrawer({
   return (
     <>
       <Sheet open={open} onOpenChange={handleOpenChange}>
-        <SheetContent className='flex h-dvh w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl'>
-          <SheetHeader className='border-b px-4 py-3 text-start sm:px-6 sm:py-4'>
+        <SheetContent className={sideDrawerContentClassName('sm:max-w-3xl')}>
+          <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle className='flex items-center gap-3'>
-              <span className='bg-muted flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border'>
+              <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md'>
                 {getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 22)}
               </span>
               <span>
@@ -1110,10 +1123,10 @@ export function ChannelMutateDrawer({
             <form
               id='channel-form'
               onSubmit={form.handleSubmit(onSubmit)}
-              className='flex-1 space-y-4 overflow-y-auto px-3 py-3 pb-4 sm:space-y-5 sm:px-4'
+              className={sideDrawerFormClassName('gap-5')}
             >
               {/* ── Basic Information ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-3 sm:p-5'>
+              <div className={sideDrawerSectionClassName()}>
                 <CardHeading
                   title={t('Basic Information')}
                   icon={<Server className='h-4 w-4' />}
@@ -1168,8 +1181,8 @@ export function ChannelMutateDrawer({
                   control={form.control}
                   name='status'
                   render={({ field }) => (
-                    <FormItem className='flex items-center justify-between rounded-lg border px-4 py-3'>
-                      <div className='space-y-0.5'>
+                    <FormItem className={sideDrawerSwitchItemClassName()}>
+                      <div className='flex flex-col gap-0.5'>
                         <FormLabel>{t('Enabled')}</FormLabel>
                         <FormDescription className='text-xs'>
                           {t('Enable or disable this channel')}
@@ -1208,7 +1221,7 @@ export function ChannelMutateDrawer({
               </div>
 
               {/* ── API Access ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-5'>
+              <div className={sideDrawerSectionClassName()}>
                 <CardHeading
                   title={t('API Access')}
                   icon={<Link2 className='h-4 w-4' />}
@@ -1376,6 +1389,13 @@ export function ChannelMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('AWS Key Format')}</FormLabel>
                         <Select
+                          items={[
+                            {
+                              value: 'ak_sk',
+                              label: t('AccessKey / SecretAccessKey'),
+                            },
+                            { value: 'api_key', label: t('API Key') },
+                          ]}
                           onValueChange={field.onChange}
                           value={field.value}
                         >
@@ -1386,13 +1406,15 @@ export function ChannelMutateDrawer({
                               />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent>
-                            <SelectItem value='ak_sk'>
-                              {t('AccessKey / SecretAccessKey')}
-                            </SelectItem>
-                            <SelectItem value='api_key'>
-                              {t('API Key')}
-                            </SelectItem>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              <SelectItem value='ak_sk'>
+                                {t('AccessKey / SecretAccessKey')}
+                              </SelectItem>
+                              <SelectItem value='api_key'>
+                                {t('API Key')}
+                              </SelectItem>
+                            </SelectGroup>
                           </SelectContent>
                         </Select>
                         <FormDescription>
@@ -1534,6 +1556,10 @@ export function ChannelMutateDrawer({
                         <FormItem>
                           <FormLabel>{t('Vertex AI Key Format')}</FormLabel>
                           <Select
+                            items={[
+                              { value: 'json', label: t('JSON') },
+                              { value: 'api_key', label: t('API Key') },
+                            ]}
                             onValueChange={field.onChange}
                             value={field.value}
                           >
@@ -1542,11 +1568,15 @@ export function ChannelMutateDrawer({
                                 <SelectValue />
                               </SelectTrigger>
                             </FormControl>
-                            <SelectContent>
-                              <SelectItem value='json'>{t('JSON')}</SelectItem>
-                              <SelectItem value='api_key'>
-                                {t('API Key')}
-                              </SelectItem>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                <SelectItem value='json'>
+                                  {t('JSON')}
+                                </SelectItem>
+                                <SelectItem value='api_key'>
+                                  {t('API Key')}
+                                </SelectItem>
+                              </SelectGroup>
                             </SelectContent>
                           </Select>
                           <FormDescription>
@@ -1672,6 +1702,22 @@ export function ChannelMutateDrawer({
                           {t('API Base URL *')}
                         </FormLabel>
                         <Select
+                          items={[
+                            {
+                              value: 'https://ark.cn-beijing.volces.com',
+                              label: t('https://ark.cn-beijing.volces.com'),
+                            },
+                            {
+                              value: 'https://ark.ap-southeast.bytepluses.com',
+                              label: t(
+                                'https://ark.ap-southeast.bytepluses.com'
+                              ),
+                            },
+                            {
+                              value: 'doubao-coding-plan',
+                              label: t('Doubao Coding Plan'),
+                            },
+                          ]}
                           onValueChange={field.onChange}
                           value={
                             field.value || 'https://ark.cn-beijing.volces.com'
@@ -1682,16 +1728,18 @@ export function ChannelMutateDrawer({
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent>
-                            <SelectItem value='https://ark.cn-beijing.volces.com'>
-                              {t('https://ark.cn-beijing.volces.com')}
-                            </SelectItem>
-                            <SelectItem value='https://ark.ap-southeast.bytepluses.com'>
-                              {t('https://ark.ap-southeast.bytepluses.com')}
-                            </SelectItem>
-                            <SelectItem value='doubao-coding-plan'>
-                              {t('Doubao Coding Plan')}
-                            </SelectItem>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              <SelectItem value='https://ark.cn-beijing.volces.com'>
+                                {t('https://ark.cn-beijing.volces.com')}
+                              </SelectItem>
+                              <SelectItem value='https://ark.ap-southeast.bytepluses.com'>
+                                {t('https://ark.ap-southeast.bytepluses.com')}
+                              </SelectItem>
+                              <SelectItem value='doubao-coding-plan'>
+                                {t('Doubao Coding Plan')}
+                              </SelectItem>
+                            </SelectGroup>
                           </SelectContent>
                         </Select>
                         <FormDescription>
@@ -1790,6 +1838,12 @@ export function ChannelMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('Add Mode')}</FormLabel>
                         <Select
+                          items={[
+                            ...ADD_MODE_OPTIONS.map((option) => ({
+                              value: option.value,
+                              label: t(option.label),
+                            })),
+                          ]}
                           onValueChange={field.onChange}
                           value={field.value}
                         >
@@ -1798,15 +1852,17 @@ export function ChannelMutateDrawer({
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent>
-                            {ADD_MODE_OPTIONS.map((option) => (
-                              <SelectItem
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {t(option.label)}
-                              </SelectItem>
-                            ))}
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {ADD_MODE_OPTIONS.map((option) => (
+                                <SelectItem
+                                  key={option.value}
+                                  value={option.value}
+                                >
+                                  {t(option.label)}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
                           </SelectContent>
                         </Select>
                         <FormDescription>
@@ -1897,7 +1953,7 @@ export function ChannelMutateDrawer({
                           </div>
                         </FormDescription>
                         {isEditing && (
-                          <div className='mt-4 space-y-3 rounded-lg border border-dashed p-4'>
+                          <div className='border-border/60 mt-4 flex flex-col gap-3 border-y border-dashed py-4'>
                             <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
                               <div>
                                 <p className='text-sm font-medium'>
@@ -1959,9 +2015,9 @@ export function ChannelMutateDrawer({
                 />
 
                 {currentType === 57 && (
-                  <div className='bg-muted/20 space-y-3 rounded-lg border p-4'>
+                  <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
                     <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                      <div className='space-y-0.5'>
+                      <div className='flex flex-col gap-0.5'>
                         <div className='text-sm font-semibold'>
                           {t('Codex Authorization')}
                         </div>
@@ -2027,6 +2083,16 @@ export function ChannelMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('Key Update Mode')}</FormLabel>
                         <Select
+                          items={[
+                            {
+                              value: 'append',
+                              label: t('Append to existing keys'),
+                            },
+                            {
+                              value: 'replace',
+                              label: t('Replace all existing keys'),
+                            },
+                          ]}
                           onValueChange={field.onChange}
                           value={field.value}
                         >
@@ -2035,13 +2101,15 @@ export function ChannelMutateDrawer({
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent>
-                            <SelectItem value='append'>
-                              {t('Append to existing keys')}
-                            </SelectItem>
-                            <SelectItem value='replace'>
-                              {t('Replace all existing keys')}
-                            </SelectItem>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              <SelectItem value='append'>
+                                {t('Append to existing keys')}
+                              </SelectItem>
+                              <SelectItem value='replace'>
+                                {t('Replace all existing keys')}
+                              </SelectItem>
+                            </SelectGroup>
                           </SelectContent>
                         </Select>
                         <FormDescription>
@@ -2067,6 +2135,10 @@ export function ChannelMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('Multi-Key Strategy')}</FormLabel>
                         <Select
+                          items={[
+                            { value: 'random', label: t('Random') },
+                            { value: 'polling', label: t('Polling') },
+                          ]}
                           onValueChange={field.onChange}
                           value={field.value}
                         >
@@ -2075,13 +2147,15 @@ export function ChannelMutateDrawer({
                               <SelectValue />
                             </SelectTrigger>
                           </FormControl>
-                          <SelectContent>
-                            <SelectItem value='random'>
-                              {t('Random')}
-                            </SelectItem>
-                            <SelectItem value='polling'>
-                              {t('Polling')}
-                            </SelectItem>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              <SelectItem value='random'>
+                                {t('Random')}
+                              </SelectItem>
+                              <SelectItem value='polling'>
+                                {t('Polling')}
+                              </SelectItem>
+                            </SelectGroup>
                           </SelectContent>
                         </Select>
                         <FormDescription>
@@ -2105,7 +2179,7 @@ export function ChannelMutateDrawer({
               </div>
 
               {/* ── Models & Groups ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-5'>
+              <div className={sideDrawerSectionClassName()}>
                 <CardHeading
                   title={t('Models & Groups')}
                   icon={<Boxes className='h-4 w-4' />}
@@ -2154,13 +2228,8 @@ export function ChannelMutateDrawer({
                                 variant='outline'
                                 size='sm'
                                 onClick={handleFetchModels}
-                                disabled={isFetchingModels}
                               >
-                                {isFetchingModels ? (
-                                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                ) : (
-                                  <Sparkles className='mr-2 h-4 w-4' />
-                                )}
+                                <Sparkles className='mr-2 h-4 w-4' />
                                 {t('Fetch from Upstream')}
                               </Button>
                             )}
@@ -2247,16 +2316,18 @@ export function ChannelMutateDrawer({
                           {t('Model Mapping')}
                         </FormLabel>
                         <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              type='button'
-                              variant='ghost'
-                              size='icon-sm'
-                              className='text-muted-foreground hover:text-foreground size-auto p-0'
-                              aria-label='How model mapping works'
-                            >
-                              <HelpCircle className='h-4 w-4' />
-                            </Button>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                type='button'
+                                variant='ghost'
+                                size='icon-sm'
+                                className='text-muted-foreground hover:text-foreground size-auto p-0'
+                                aria-label='How model mapping works'
+                              />
+                            }
+                          >
+                            <HelpCircle className='h-4 w-4' />
                           </TooltipTrigger>
                           <TooltipContent
                             side='top'
@@ -2362,38 +2433,40 @@ export function ChannelMutateDrawer({
                 open={advancedSettingsOpen}
                 onOpenChange={handleAdvancedSettingsOpenChange}
               >
-                <CollapsibleTrigger asChild>
-                  <button
-                    type='button'
-                    className='bg-card hover:bg-accent/50 flex w-full items-center justify-between rounded-xl border px-5 py-4 text-left transition-colors'
-                  >
-                    <div className='space-y-0.5'>
-                      <div className='text-[13px] font-semibold'>
-                        {t('Advanced Settings')}
-                      </div>
-                      <div className='text-muted-foreground text-xs'>
-                        {t(
-                          'Request overrides, routing behavior, and upstream model automation'
-                        )}
-                      </div>
-                    </div>
-                    <ChevronDown
-                      className={cn(
-                        'text-muted-foreground h-4 w-4 shrink-0 transition-transform',
-                        advancedSettingsOpen && 'rotate-180'
-                      )}
+                <CollapsibleTrigger
+                  render={
+                    <button
+                      type='button'
+                      className='hover:bg-muted/40 flex w-full items-center justify-between rounded-md py-2 text-left transition-colors'
                     />
-                  </button>
+                  }
+                >
+                  <div className='flex flex-col gap-0.5'>
+                    <div className='text-[13px] font-semibold'>
+                      {t('Advanced Settings')}
+                    </div>
+                    <div className='text-muted-foreground text-xs'>
+                      {t(
+                        'Request overrides, routing behavior, and upstream model automation'
+                      )}
+                    </div>
+                  </div>
+                  <ChevronDown
+                    className={cn(
+                      'text-muted-foreground h-4 w-4 shrink-0 transition-transform',
+                      advancedSettingsOpen && 'rotate-180'
+                    )}
+                  />
                 </CollapsibleTrigger>
 
-                <CollapsibleContent className='mt-5 space-y-5'>
+                <CollapsibleContent className='mt-5 flex flex-col gap-5'>
                   {/* ── Routing & Overrides ── */}
-                  <div className='bg-card space-y-4 rounded-xl border p-5'>
+                  <div className={sideDrawerSectionClassName()}>
                     <CardHeading
                       title={t('Routing & Overrides')}
                       icon={<Route className='h-4 w-4' />}
                     />
-                    <div className='space-y-4'>
+                    <div className='flex flex-col gap-4'>
                       <SubHeading
                         title={t('Routing Strategy')}
                         icon={<Route className='h-3.5 w-3.5' />}
@@ -2492,7 +2565,7 @@ export function ChannelMutateDrawer({
                       />
                     </div>
 
-                    <div className='space-y-4 border-t pt-4'>
+                    <div className='flex flex-col gap-4 border-t pt-4'>
                       <SubHeading
                         title={t('Internal Notes')}
                         icon={<FileText className='h-3.5 w-3.5' />}
@@ -2541,7 +2614,7 @@ export function ChannelMutateDrawer({
                       </div>
                     </div>
 
-                    <div className='space-y-4 border-t pt-4'>
+                    <div className='flex flex-col gap-4 border-t pt-4'>
                       <SubHeading
                         title={t('Override Rules')}
                         icon={<Code className='h-3.5 w-3.5' />}
@@ -2783,13 +2856,13 @@ export function ChannelMutateDrawer({
                   </div>
 
                   {/* ── Extra Settings ── */}
-                  <div className='bg-card space-y-4 rounded-xl border p-5'>
+                  <div className={sideDrawerSectionClassName()}>
                     <CardHeading
                       title={t('Channel Extra Settings')}
                       icon={<Settings className='h-4 w-4' />}
                     />
                     {(currentType === 1 || currentType === 14) && (
-                      <div className='space-y-3 rounded-lg border p-4'>
+                      <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
                         <SubHeading
                           title={t('Field passthrough controls')}
                           icon={<SlidersHorizontal className='h-3.5 w-3.5' />}
@@ -3155,7 +3228,7 @@ export function ChannelMutateDrawer({
                     />
 
                     {MODEL_FETCHABLE_TYPES.has(currentType) && (
-                      <div className='space-y-3 rounded-lg border p-4'>
+                      <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
                         <SubHeading
                           title={t('Upstream Model Detection Settings')}
                           icon={<RefreshCw className='h-3.5 w-3.5' />}
@@ -3276,11 +3349,11 @@ export function ChannelMutateDrawer({
             </form>
           </Form>
 
-          <SheetFooter className='grid grid-cols-2 gap-2 border-t px-4 py-3 sm:flex sm:px-6 sm:py-4'>
-            <SheetClose asChild>
-              <Button variant='outline' disabled={isSubmitting}>
-                {t('Cancel')}
-              </Button>
+          <SheetFooter className={sideDrawerFooterClassName()}>
+            <SheetClose
+              render={<Button variant='outline' disabled={isSubmitting} />}
+            >
+              {t('Cancel')}
             </SheetClose>
             <Button form='channel-form' type='submit' disabled={isSubmitting}>
               {isSubmitting && (
@@ -3306,19 +3379,23 @@ export function ChannelMutateDrawer({
         />
       )}
 
-      {/* Fetch Models Dialog (for editing mode) */}
-      {isEditing && currentRow && (
-        <FetchModelsDialog
-          open={fetchModelsDialogOpen}
-          onOpenChange={setFetchModelsDialogOpen}
-          onModelsSelected={(models) => {
-            // Fill selected models to form
-            form.setValue('models', formatModelsArray(models))
-          }}
-          redirectModels={redirectModelList}
-          redirectSourceModels={redirectModelKeyList}
-        />
-      )}
+      {/* Fetch Models Dialog */}
+      <FetchModelsDialog
+        open={fetchModelsDialogOpen}
+        onOpenChange={setFetchModelsDialogOpen}
+        onModelsSelected={(models) => {
+          form.setValue('models', formatModelsArray(models))
+        }}
+        redirectModels={redirectModelList}
+        redirectSourceModels={redirectModelKeyList}
+        customFetcher={!isEditing ? createModeFetcher : undefined}
+        channelName={!isEditing ? currentName?.trim() : undefined}
+        existingModelsOverride={
+          !isEditing
+            ? parseModelsString(form.getValues('models') || '')
+            : undefined
+        }
+      />
 
       <SecureVerificationDialog
         open={verificationOpen}
