@@ -89,82 +89,85 @@ export function ContentModeration() {
   }
 
   return (
-    <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Content audit')}</SectionPageLayout.Title>
-      <SectionPageLayout.Actions>
-        <Button
-          variant='outline'
-          size='sm'
-          onClick={refresh}
-          disabled={status.isFetching}
-        >
-          <RefreshCw data-icon='inline-start' aria-hidden='true' />
-          {t('Refresh status')}
-        </Button>
-        <Button
-          size='sm'
-          disabled={!config.data}
-          onClick={() => setSettingsOpen(true)}
-        >
-          <Settings data-icon='inline-start' aria-hidden='true' />
-          {t('Content audit settings')}
-        </Button>
-      </SectionPageLayout.Actions>
-      <SectionPageLayout.Content>
-        {config.isError ? (
-          <ErrorState
-            title={t('Failed to load settings')}
-            onRetry={() => void config.refetch()}
-          />
-        ) : (
-          <div className='flex flex-col gap-4 pb-6'>
-            <p className='text-muted-foreground text-sm'>
-              {t('Configure content audit policies and review audit records')}
-              {' · '}
-              {t('Active engine: {{engine}}', { engine: 'OpenAI' })}
-            </p>
-            {allKeysUnavailable && (
-              <Alert variant='destructive'>
-                <AlertDescription>
-                  {t(
-                    'All moderation API keys are frozen or failing; requests are currently allowed without moderation.'
-                  )}
-                </AlertDescription>
-              </Alert>
-            )}
-            <ModerationStatusCards
-              status={status.data}
-              config={config.data}
-              logTotal={logs.data?.total}
-              loading={config.isPending}
+    <>
+      <SectionPageLayout>
+        <SectionPageLayout.Title>{t('Content audit')}</SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={refresh}
+            disabled={status.isFetching}
+          >
+            <RefreshCw data-icon='inline-start' aria-hidden='true' />
+            {t('Refresh status')}
+          </Button>
+          <Button
+            size='sm'
+            disabled={!config.data}
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings data-icon='inline-start' aria-hidden='true' />
+            {t('Content audit settings')}
+          </Button>
+        </SectionPageLayout.Actions>
+        <SectionPageLayout.Content>
+          {config.isError ? (
+            <ErrorState
+              title={t('Failed to load settings')}
+              onRetry={() => void config.refetch()}
             />
-            {status.data && active && mode === 'pre_block' && (
-              <PreBlockPanels status={status.data} />
-            )}
-            {status.data && active && mode === 'observe' && (
-              <WorkerPanel status={status.data} />
-            )}
-            <Card size='sm'>
-              <CardHeader>
-                <CardTitle>{t('Audit records')}</CardTitle>
-                <CardDescription>
-                  {t(
-                    'Hits are always recorded; passed checks are recorded only when non-hit recording is on.'
-                  )}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ModerationLogViewer
-                  query={logs}
-                  filters={filters}
-                  setFilters={setFilters}
-                  groups={groups.data ?? []}
-                />
-              </CardContent>
-            </Card>
-          </div>
-        )}
-      </SectionPageLayout.Content>
+          ) : (
+            <div className='flex flex-col gap-4 pb-6'>
+              <p className='text-muted-foreground text-sm'>
+                {t('Configure content audit policies and review audit records')}
+                {' · '}
+                {t('Active engine: {{engine}}', { engine: 'OpenAI' })}
+              </p>
+              {allKeysUnavailable && (
+                <Alert variant='destructive'>
+                  <AlertDescription>
+                    {t(
+                      'All moderation API keys are frozen or failing; requests are currently allowed without moderation.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+              <ModerationStatusCards
+                status={status.data}
+                config={config.data}
+                logTotal={logs.data?.total}
+                loading={config.isPending}
+              />
+              {status.data && active && mode === 'pre_block' && (
+                <PreBlockPanels status={status.data} />
+              )}
+              {status.data && active && mode === 'observe' && (
+                <WorkerPanel status={status.data} />
+              )}
+              <Card size='sm'>
+                <CardHeader>
+                  <CardTitle>{t('Audit records')}</CardTitle>
+                  <CardDescription>
+                    {t(
+                      'Hits are always recorded; passed checks are recorded only when non-hit recording is on.'
+                    )}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ModerationLogViewer
+                    query={logs}
+                    filters={filters}
+                    setFilters={setFilters}
+                    groups={groups.data ?? []}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
+      {/* SectionPageLayout only renders its slots, so dialogs live outside it. */}
       {config.data && (
         <ModerationSettingsDialog
           open={settingsOpen}
@@ -173,6 +176,6 @@ export function ContentModeration() {
           status={status.data}
         />
       )}
-    </SectionPageLayout>
+    </>
   )
 }
