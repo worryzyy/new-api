@@ -25,8 +25,11 @@ import { StatusBadge } from '@/components/status-badge'
 import dayjs from '@/lib/dayjs'
 
 import type { ModerationLog } from '../api'
-import { moderationActionBadge, moderationReason } from '../lib/display'
+import { formatPercent, moderationResultBadge } from '../lib/display'
 import { ModerationLogDetailsDialog } from './moderation-log-details-dialog'
+import { UnbanUserButton } from './unban-user-button'
+
+const USER_STATUS_DISABLED = 2
 
 export function useModerationLogColumns(): ColumnDef<ModerationLog>[] {
   const { t } = useTranslation()
@@ -35,7 +38,7 @@ export function useModerationLogColumns(): ColumnDef<ModerationLog>[] {
       {
         accessorKey: 'created_at',
         header: t('Time'),
-        size: 170,
+        size: 160,
         cell: ({ row }) => (
           <span className='font-mono tabular-nums'>
             {dayjs.unix(row.original.created_at).format('YYYY-MM-DD HH:mm:ss')}
@@ -44,82 +47,149 @@ export function useModerationLogColumns(): ColumnDef<ModerationLog>[] {
         meta: { label: t('Time'), mobileTitle: true },
       },
       {
+        accessorKey: 'group_name',
+        header: t('Group'),
+        size: 90,
+        cell: ({ row }) => row.original.group_name || '—',
+        meta: { label: t('Group'), mobileHidden: true },
+      },
+      {
         accessorKey: 'username',
         header: t('User'),
-        size: 130,
+        size: 160,
         cell: ({ row }) => (
-          <TruncatedCell className='max-w-32'>
-            {`${row.original.username || '—'} #${row.original.user_id}`}
-          </TruncatedCell>
+          <div className='min-w-0'>
+            <TruncatedCell className='max-w-40'>
+              {row.original.user_email || row.original.username || '—'}
+            </TruncatedCell>
+            <div className='text-muted-foreground text-xs'>
+              UID {row.original.user_id}
+            </div>
+          </div>
         ),
         meta: { label: t('User') },
       },
       {
-        accessorKey: 'action',
-        header: t('Action'),
+        accessorKey: 'token_name',
+        header: t('API Key'),
         size: 110,
+        cell: ({ row }) => (
+          <TruncatedCell className='max-w-28'>
+            {row.original.token_name || '—'}
+          </TruncatedCell>
+        ),
+        meta: { label: t('API Key'), mobileHidden: true },
+      },
+      {
+        accessorKey: 'endpoint',
+        header: t('Endpoint'),
+        size: 170,
+        cell: ({ row }) => (
+          <div className='min-w-0'>
+            <TruncatedCell className='max-w-44 font-mono'>
+              {row.original.endpoint || '—'}
+            </TruncatedCell>
+            <TruncatedCell className='text-muted-foreground max-w-44 text-xs'>
+              {row.original.model_name || '—'}
+            </TruncatedCell>
+          </div>
+        ),
+        meta: { label: t('Endpoint'), mobileHidden: true },
+      },
+      {
+        id: 'result',
+        header: t('Result'),
+        size: 100,
         cell: ({ row }) => {
-          const badge = moderationActionBadge(row.original.action, t)
+          const badge = moderationResultBadge(row.original, t)
           return (
-            <div className='flex flex-wrap gap-1'>
-              <StatusBadge
-                label={badge.label}
-                variant={badge.variant}
-                copyable={false}
-              />
-              {row.original.auto_banned && (
-                <StatusBadge
-                  label={t('User disabled')}
-                  variant='danger'
-                  copyable={false}
-                />
-              )}
+            <StatusBadge
+              label={badge.label}
+              variant={badge.variant}
+              copyable={false}
+            />
+          )
+        },
+        meta: { label: t('Result'), mobileBadge: true },
+      },
+      {
+        id: 'risk',
+        header: t('Highest risk'),
+        size: 150,
+        cell: ({ row }) => {
+          if (row.original.matched_keyword) {
+            return (
+              <TruncatedCell className='text-destructive max-w-36'>
+                {t('Keyword: {{keyword}}', {
+                  keyword: row.original.matched_keyword,
+                })}
+              </TruncatedCell>
+            )
+          }
+          if (!row.original.category) return '—'
+          return (
+            <div className='text-xs'>
+              <div className='truncate'>{row.original.category}</div>
+              <div className='text-muted-foreground tabular-nums'>
+                {formatPercent(row.original.score)}
+              </div>
             </div>
           )
         },
-        meta: { label: t('Action'), mobileBadge: true },
+        meta: { label: t('Highest risk') },
       },
       {
-        id: 'reason',
-        header: t('Reason'),
-        size: 200,
-        accessorFn: (entry) => moderationReason(entry, t),
-        cell: ({ getValue }) => (
-          <TruncatedCell className='max-w-52'>
-            {getValue<string>()}
-          </TruncatedCell>
-        ),
-        meta: { label: t('Reason') },
-      },
-      {
-        accessorKey: 'model_name',
-        header: t('Model'),
-        size: 160,
+        id: 'disposition',
+        header: t('Disposition'),
+        size: 130,
         cell: ({ row }) => (
-          <TruncatedCell className='max-w-40 font-mono'>
-            {row.original.model_name || '—'}
-          </TruncatedCell>
+          <div className='flex flex-col items-start gap-1 text-xs'>
+            {row.original.violation_count > 0 && (
+              <span className='tabular-nums'>
+                {t('Violation {{count}}', {
+                  count: row.original.violation_count,
+                })}
+              </span>
+            )}
+            {row.original.auto_banned && (
+              <StatusBadge
+                label={t('User disabled')}
+                variant='danger'
+                copyable={false}
+              />
+            )}
+            {row.original.auto_banned &&
+              row.original.user_status === USER_STATUS_DISABLED && (
+                <UnbanUserButton entry={row.original} />
+              )}
+            {!row.original.violation_count && !row.original.auto_banned && '—'}
+          </div>
         ),
-        meta: { label: t('Model'), mobileHidden: true },
+        meta: { label: t('Disposition') },
+      },
+      {
+        id: 'latency',
+        header: t('Latency'),
+        size: 100,
+        cell: ({ row }) => (
+          <div className='text-xs tabular-nums'>
+            <div>{row.original.upstream_latency_ms} ms</div>
+            {row.original.queue_delay_ms > 0 && (
+              <div className='text-muted-foreground'>
+                {t('Queue {{ms}} ms', { ms: row.original.queue_delay_ms })}
+              </div>
+            )}
+          </div>
+        ),
+        meta: { label: t('Latency'), mobileHidden: true },
       },
       {
         accessorKey: 'input_excerpt',
-        header: t('Input excerpt'),
-        size: 280,
-        cell: ({ row }) => (
-          <TruncatedCell className='max-w-72'>
-            {row.original.input_excerpt || '—'}
-          </TruncatedCell>
-        ),
-        meta: { label: t('Input excerpt'), mobileHidden: true },
-      },
-      {
-        id: 'details',
-        header: t('Details'),
-        size: 70,
+        header: t('Input'),
+        size: 240,
         enableHiding: false,
         cell: ({ row }) => <ModerationLogDetailsDialog entry={row.original} />,
-        meta: { label: t('Details') },
+        meta: { label: t('Input') },
       },
     ],
     [t]

@@ -1,17 +1,13 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"strconv"
+	"slices"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -19,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -27,519 +22,371 @@ import (
 )
 
 const (
-	moderationMaxTextRunes    = 10000
-	moderationExcerptRunes    = 500
-	moderationMaxImageURLSize = 8 << 20
-	moderationQueueSize       = 2000
-	moderationWorkerCount     = 2
-)
+	moderationSourceKeyword = "keyword"
+	moderationSourceHash    = "hash"
+	moderationSourceOpenAI  = "openai"
 
-// ModerationInput is the part of a relay request that moderation inspects:
-// the latest user turn only, so replayed history is not re-judged each turn.
-type ModerationInput struct {
-	Text     string
-	ImageURL string
-}
+	moderationHashSetKey = "content_moderation:flagged_hashes"
+)
 
 type ModerationVerdict struct {
 	Flagged        bool               `json:"flagged"`
 	Source         string             `json:"source,omitempty"`
 	MatchedKeyword string             `json:"matched_keyword,omitempty"`
-	Category       string             `json:"category,omitempty"`
-	Score          float64            `json:"score,omitempty"`
+	Category       string             `json:"highest_category,omitempty"`
+	Score          float64            `json:"highest_score"`
 	CategoryScores map[string]float64 `json:"category_scores,omitempty"`
+	Thresholds     map[string]float64 `json:"thresholds,omitempty"`
+}
+
+// EvaluateOpenAIModeration flags a result when any category score reaches its
+// threshold; the upstream flag is ignored. The highest-scoring category is
+// reported whether or not it caused the hit.
+func EvaluateOpenAIModeration(result OpenAIModerationResult, thresholds map[string]float64) ModerationVerdict {
+	verdict := ModerationVerdict{Source: moderationSourceOpenAI, CategoryScores: result.CategoryScores, Thresholds: thresholds}
+	for category, score := range result.CategoryScores {
+		if threshold, ok := thresholds[category]; ok && score >= threshold {
+			verdict.Flagged = true
+		}
+		if score > verdict.Score || (score == verdict.Score && (verdict.Category == "" || category < verdict.Category)) {
+			verdict.Category = category
+			verdict.Score = score
+		}
+	}
+	return verdict
+}
+
+// moderationOutcome is the result of one moderation pass. blockAction is the
+// record action used when the request is flagged and blocking is allowed.
+type moderationOutcome struct {
+	verdict         ModerationVerdict
+	blockAction     string
+	err             error
+	upstreamLatency time.Duration
+	inputHash       string
+	sampledOut      bool
+}
+
+// runModeration applies keywords, the flagged-hash pre-check, sampling and the
+// OpenAI endpoint in that order.
+func runModeration(ctx context.Context, config *operation_setting.ContentModerationConfig, input ModerationInput, trackLoad bool) moderationOutcome {
+	var outcome moderationOutcome
+	if config.KeywordBlockingMode != operation_setting.ContentModerationAPIOnly {
+		if keyword := matchModerationKeyword(config.BlockedKeywords, input.Text); keyword != "" {
+			outcome.verdict = ModerationVerdict{Flagged: true, Source: moderationSourceKeyword, MatchedKeyword: keyword}
+			outcome.blockAction = model.ContentModerationActionKeywordBlock
+			return outcome
+		}
+		if config.KeywordBlockingMode == operation_setting.ContentModerationKeywordOnly {
+			return outcome
+		}
+	}
+	outcome.inputHash = moderationInputHash(input)
+	if config.PreHashCheckEnabled && moderationHashFlagged(outcome.inputHash) {
+		outcome.verdict = ModerationVerdict{Flagged: true, Source: moderationSourceHash}
+		outcome.blockAction = model.ContentModerationActionHashBlock
+		return outcome
+	}
+	if !moderationSampled(outcome.inputHash, config.SampleRate) {
+		outcome.sampledOut = true
+		return outcome
+	}
+	if len(config.APIKeys) == 0 {
+		outcome.err = errNoModerationKey
+		return outcome
+	}
+	result, latency, err := moderateWithKeyPool(ctx, config, input, trackLoad)
+	outcome.upstreamLatency = latency
+	if err != nil {
+		outcome.err = err
+		return outcome
+	}
+	outcome.verdict = EvaluateOpenAIModeration(result, config.Thresholds)
+	if outcome.verdict.Flagged {
+		outcome.blockAction = model.ContentModerationActionBlock
+		addModerationHash(outcome.inputHash)
+	}
+	return outcome
+}
+
+// CheckModerationInput runs the saved configuration on an input without
+// recording it, for the administrator test panel.
+func CheckModerationInput(ctx context.Context, input ModerationInput) (ModerationVerdict, error) {
+	outcome := runModeration(ctx, operation_setting.GetContentModerationConfig(), input, false)
+	return outcome.verdict, outcome.err
+}
+
+func matchModerationKeyword(keywords []string, text string) string {
+	if text == "" || len(keywords) == 0 {
+		return ""
+	}
+	lowered := make([]string, 0, len(keywords))
+	for _, keyword := range keywords {
+		lowered = append(lowered, strings.ToLower(keyword))
+	}
+	if found, words := AcSearch(strings.ToLower(text), lowered, true); found && len(words) > 0 {
+		return words[0]
+	}
+	return ""
 }
 
 type moderationJob struct {
-	input     ModerationInput
+	check      bool
+	input      ModerationInput
+	outcome    moderationOutcome
+	allowBlock bool
+	logOnly    bool
+	enqueuedAt time.Time
+
 	requestId string
 	userId    int
 	username  string
+	userEmail string
 	tokenId   int
 	tokenName string
 	group     string
 	modelName string
 	endpoint  string
+	mode      string
+}
+
+type moderationRuntimeStats struct {
+	preBlockActive    atomic.Int64
+	preBlockChecked   atomic.Int64
+	preBlockAllowed   atomic.Int64
+	preBlockBlocked   atomic.Int64
+	preBlockErrors    atomic.Int64
+	preBlockLatencyMs atomic.Int64
+
+	activeWorkers atomic.Int64
+	enqueued      atomic.Int64
+	dropped       atomic.Int64
+	processed     atomic.Int64
+	asyncErrors   atomic.Int64
+
+	lastCleanupAt            atomic.Int64
+	lastCleanupDeletedHit    atomic.Int64
+	lastCleanupDeletedNonHit atomic.Int64
 }
 
 var (
-	moderationQueue     chan moderationJob
-	moderationStartOnce sync.Once
+	moderationStats moderationRuntimeStats
+	// The channel holds pointers up to the maximum queue size; the configured
+	// queue size is enforced when enqueuing so it can change at runtime.
+	moderationQueue   = make(chan *moderationJob, operation_setting.ContentModerationMaxQueueSize)
+	moderationStarted atomic.Bool
 )
 
 // ModerateRelayRequest runs the configured content moderation before billing.
-// It returns an error only when block mode flags the request; moderation
-// failures never reject a request.
+// It returns an error only when a pre-block check flags the request.
 func ModerateRelayRequest(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
-	setting := operation_setting.GetContentModerationSetting()
-	if setting.Mode != operation_setting.ContentModerationModeBlock && setting.Mode != operation_setting.ContentModerationModeObserve {
+	config := operation_setting.GetContentModerationConfig()
+	if !config.Enabled || config.Mode == operation_setting.ContentModerationModeOff {
 		return nil
 	}
-	if info == nil || info.Request == nil || !moderationAppliesTo(setting, info.UserId, info.UsingGroup, info.OriginModelName) {
+	if info == nil || info.Request == nil || !config.GroupInScope(info.UsingGroup) || !config.ModelInScope(info.OriginModelName) {
 		return nil
 	}
 	input := ExtractModerationInput(info.Request)
 	if input.Text == "" && input.ImageURL == "" {
 		return nil
 	}
-	moderationStartOnce.Do(startModerationWorkers)
-
-	job := moderationJob{
+	job := &moderationJob{
 		input:     input,
+		logOnly:   slices.Contains(config.ExemptUserIds, info.UserId),
 		requestId: c.GetString(common.RequestIdKey),
 		userId:    info.UserId,
 		username:  common.GetContextKeyString(c, constant.ContextKeyUserName),
+		userEmail: info.UserEmail,
 		tokenId:   info.TokenId,
 		tokenName: c.GetString("token_name"),
 		group:     info.UsingGroup,
 		modelName: info.OriginModelName,
 		endpoint:  c.Request.URL.Path,
+		mode:      config.Mode,
 	}
-
-	if setting.Mode == operation_setting.ContentModerationModeObserve {
-		select {
-		case moderationQueue <- job:
-		default:
-			common.SysError("content moderation queue is full, dropping an observe-mode check")
-		}
+	if job.logOnly {
+		job.mode = model.ContentModerationModeLogOnly
+	}
+	if config.Mode == operation_setting.ContentModerationModeObserve || job.logOnly {
+		job.check = true
+		enqueueModerationJob(config, job)
 		return nil
 	}
 
-	verdict, err := CheckModerationInput(c.Request.Context(), input)
-	if err != nil {
-		logger.LogWarn(c, common.LogText("content moderation check failed, request allowed: %s", err.Error()))
-	}
-	if !verdict.Flagged {
-		return nil
-	}
-	recordContentViolation(job, verdict, model.ContentModerationActionBlock)
-	RequestPolicy(c).AddEvent(PolicyEvent{ErrorCode: string(types.ErrorCodeContentPolicyViolation), ErrorSource: "local", Decision: PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
-	logger.LogWarn(c, common.LogText("content moderation blocked request: source=%s category=%s keyword=%s", verdict.Source, verdict.Category, verdict.MatchedKeyword))
-	return types.NewErrorWithStatusCode(errors.New(i18n.T(c, i18n.MsgRelayContentPolicyViolation)), types.ErrorCodeContentPolicyViolation, http.StatusForbidden, types.ErrOptionWithSkipRetry())
-}
-
-// CheckModerationInput applies the keyword list first and then, when enabled,
-// the OpenAI moderation endpoint. A non-nil error means the OpenAI check could
-// not complete; the returned verdict still reflects the keyword result.
-func CheckModerationInput(ctx context.Context, input ModerationInput) (ModerationVerdict, error) {
-	setting := operation_setting.GetContentModerationSetting()
-	if keyword := matchModerationKeyword(setting.Keywords, input.Text); keyword != "" {
-		return ModerationVerdict{Flagged: true, Source: model.ContentModerationSourceKeyword, MatchedKeyword: keyword}, nil
-	}
-	if !setting.OpenAIEnabled || strings.TrimSpace(setting.OpenAIAPIKey) == "" {
-		return ModerationVerdict{}, nil
-	}
-	result, err := requestOpenAIModeration(ctx, setting, input)
-	if err != nil {
-		return ModerationVerdict{}, err
-	}
-	return EvaluateOpenAIModeration(result, setting.CategoryThresholds), nil
-}
-
-// ExtractModerationInput returns the text and first image of the latest user
-// turn for each supported relay format.
-func ExtractModerationInput(request dto.Request) ModerationInput {
-	var input ModerationInput
-	switch req := request.(type) {
-	case *dto.GeneralOpenAIRequest:
-		for i := len(req.Messages) - 1; i >= 0; i-- {
-			if req.Messages[i].Role != "user" {
-				continue
-			}
-			var text strings.Builder
-			for _, part := range req.Messages[i].ParseContent() {
-				switch part.Type {
-				case dto.ContentTypeText:
-					appendModerationText(&text, part.Text)
-				case dto.ContentTypeImageURL:
-					if image := part.GetImageMedia(); image != nil && input.ImageURL == "" {
-						input.ImageURL = image.Url
-					}
-				}
-			}
-			input.Text = text.String()
-			break
-		}
-		if len(req.Messages) == 0 {
-			if prompt, ok := req.Prompt.(string); ok {
-				input.Text = prompt
-			}
-		}
-	case *dto.ClaudeRequest:
-		for i := len(req.Messages) - 1; i >= 0; i-- {
-			if req.Messages[i].Role != "user" {
-				continue
-			}
-			if req.Messages[i].IsStringContent() {
-				input.Text = req.Messages[i].GetStringContent()
-				break
-			}
-			parts, _ := req.Messages[i].ParseContent()
-			var text strings.Builder
-			for _, part := range parts {
-				switch part.Type {
-				case dto.ContentTypeText:
-					if part.Text != nil {
-						appendModerationText(&text, *part.Text)
-					}
-				case "image":
-					if input.ImageURL == "" && part.Source != nil {
-						input.ImageURL = claudeImageURL(part.Source)
-					}
-				}
-			}
-			input.Text = text.String()
-			break
-		}
-	case *dto.GeminiChatRequest:
-		for i := len(req.Contents) - 1; i >= 0; i-- {
-			if req.Contents[i].Role != "" && req.Contents[i].Role != "user" {
-				continue
-			}
-			var text strings.Builder
-			for _, part := range req.Contents[i].Parts {
-				if part.Text != "" && !part.Thought {
-					appendModerationText(&text, part.Text)
-				}
-				if input.ImageURL == "" && part.InlineData != nil && strings.HasPrefix(part.InlineData.MimeType, "image/") {
-					input.ImageURL = "data:" + part.InlineData.MimeType + ";base64," + part.InlineData.Data
-				}
-			}
-			input.Text = text.String()
-			break
-		}
-	case *dto.OpenAIResponsesRequest:
-		input = extractResponsesModerationInput(req)
-	case *dto.ImageRequest:
-		input.Text = req.Prompt
-	}
-	input.Text = stripSystemReminders(input.Text)
-	return input
-}
-
-func extractResponsesModerationInput(req *dto.OpenAIResponsesRequest) ModerationInput {
-	var input ModerationInput
-	switch common.GetJsonType(req.Input) {
-	case "string":
-		_ = common.Unmarshal(req.Input, &input.Text)
-		return input
-	case "array":
+	moderationStats.preBlockActive.Add(1)
+	started := time.Now()
+	outcome := runModeration(c.Request.Context(), config, input, true)
+	moderationStats.preBlockActive.Add(-1)
+	moderationStats.preBlockChecked.Add(1)
+	moderationStats.preBlockLatencyMs.Add(time.Since(started).Milliseconds())
+	switch {
+	case outcome.verdict.Flagged:
+		moderationStats.preBlockBlocked.Add(1)
+	case outcome.err != nil:
+		moderationStats.preBlockErrors.Add(1)
+		logger.LogWarn(c, common.LogText("content moderation check failed, request allowed: %s", outcome.err.Error()))
 	default:
-		return input
+		moderationStats.preBlockAllowed.Add(1)
 	}
-	var items []dto.Input
-	if err := common.Unmarshal(req.Input, &items); err != nil {
-		return input
+	job.outcome = outcome
+	job.allowBlock = true
+	if moderationShouldRecord(config, outcome) {
+		enqueueModerationJob(config, job)
 	}
-	for i := len(items) - 1; i >= 0; i-- {
-		item := items[i]
-		if item.Role != "user" || (item.Type != "" && item.Type != "message") {
-			continue
-		}
-		if common.GetJsonType(item.Content) == "string" {
-			_ = common.Unmarshal(item.Content, &input.Text)
-			return input
-		}
-		var parts []struct {
-			Type     string `json:"type"`
-			Text     string `json:"text"`
-			ImageURL any    `json:"image_url"`
-		}
-		if err := common.Unmarshal(item.Content, &parts); err != nil {
-			return input
-		}
-		var text strings.Builder
-		for _, part := range parts {
-			switch part.Type {
-			case "input_text":
-				appendModerationText(&text, part.Text)
-			case "input_image":
-				if url, ok := part.ImageURL.(string); ok && input.ImageURL == "" {
-					input.ImageURL = url
-				}
-			}
-		}
-		input.Text = text.String()
-		return input
+	if !outcome.verdict.Flagged {
+		return nil
 	}
-	return input
+
+	RequestPolicy(c).AddEvent(PolicyEvent{ErrorCode: string(types.ErrorCodeContentPolicyViolation), ErrorSource: "local", Decision: PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
+	logger.LogWarn(c, common.LogText("content moderation blocked request: action=%s category=%s keyword=%s", outcome.blockAction, outcome.verdict.Category, outcome.verdict.MatchedKeyword))
+	message := config.BlockMessage
+	if message == "" {
+		message = i18n.T(c, i18n.MsgRelayContentPolicyViolation)
+	}
+	if outcome.blockAction == model.ContentModerationActionHashBlock {
+		message = fmt.Sprintf("%s (hash: %s)", message, outcome.inputHash)
+	}
+	return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeContentPolicyViolation, config.BlockStatus, types.ErrOptionWithSkipRetry())
 }
 
-func appendModerationText(builder *strings.Builder, text string) {
-	if text == "" {
+func moderationShouldRecord(config *operation_setting.ContentModerationConfig, outcome moderationOutcome) bool {
+	if outcome.sampledOut {
+		return false
+	}
+	return outcome.verdict.Flagged || config.RecordNonHits
+}
+
+func enqueueModerationJob(config *operation_setting.ContentModerationConfig, job *moderationJob) {
+	if len(moderationQueue) >= config.QueueSize {
+		moderationStats.dropped.Add(1)
 		return
 	}
-	if builder.Len() > 0 {
-		builder.WriteString("\n")
-	}
-	builder.WriteString(text)
-}
-
-func claudeImageURL(source *dto.ClaudeMessageSource) string {
-	if source.Url != "" {
-		return source.Url
-	}
-	data, ok := source.Data.(string)
-	if !ok || data == "" || source.MediaType == "" {
-		return ""
-	}
-	return "data:" + source.MediaType + ";base64," + data
-}
-
-// stripSystemReminders removes <system-reminder> blocks that coding agents
-// inject into user turns; they are client scaffolding, not user input.
-func stripSystemReminders(text string) string {
-	const openTag, closeTag = "<system-reminder>", "</system-reminder>"
-	for {
-		start := strings.Index(text, openTag)
-		if start < 0 {
-			return strings.TrimSpace(text)
-		}
-		end := strings.Index(text[start:], closeTag)
-		if end < 0 {
-			return strings.TrimSpace(text[:start])
-		}
-		text = text[:start] + text[start+end+len(closeTag):]
+	job.enqueuedAt = time.Now()
+	select {
+	case moderationQueue <- job:
+		moderationStats.enqueued.Add(1)
+	default:
+		moderationStats.dropped.Add(1)
 	}
 }
 
-func splitModerationList(raw string) []string {
-	var items []string
-	for _, item := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' }) {
-		if item = strings.TrimSpace(item); item != "" {
-			items = append(items, item)
-		}
+// StartContentModerationRuntime starts the async workers and the retention
+// cleanup. Workers above the configured count stay idle, so the count can
+// change without a restart.
+func StartContentModerationRuntime() {
+	if !moderationStarted.CompareAndSwap(false, true) {
+		return
 	}
-	return items
-}
-
-func moderationAppliesTo(setting *operation_setting.ContentModerationSetting, userId int, group string, modelName string) bool {
-	for _, raw := range splitModerationList(setting.ExemptUserIds) {
-		if id, err := strconv.Atoi(raw); err == nil && id == userId {
-			return false
-		}
-	}
-	if groups := splitModerationList(setting.IncludeGroups); len(groups) > 0 && !moderationListMatches(groups, group) {
-		return false
-	}
-	if models := splitModerationList(setting.IncludeModels); len(models) > 0 && !moderationListMatches(models, modelName) {
-		return false
-	}
-	return !moderationListMatches(splitModerationList(setting.ExcludeModels), modelName)
-}
-
-// moderationListMatches matches exact names, or prefixes for entries ending in "*".
-func moderationListMatches(patterns []string, name string) bool {
-	for _, pattern := range patterns {
-		if prefix, ok := strings.CutSuffix(pattern, "*"); ok {
-			if strings.HasPrefix(name, prefix) {
-				return true
-			}
-			continue
-		}
-		if pattern == name {
-			return true
-		}
-	}
-	return false
-}
-
-func matchModerationKeyword(rawKeywords string, text string) string {
-	if text == "" {
-		return ""
-	}
-	var keywords []string
-	for line := range strings.SplitSeq(rawKeywords, "\n") {
-		if line = strings.ToLower(strings.TrimSpace(line)); line != "" {
-			keywords = append(keywords, line)
-		}
-	}
-	if len(keywords) == 0 {
-		return ""
-	}
-	if found, words := AcSearch(strings.ToLower(text), keywords, true); found && len(words) > 0 {
-		return words[0]
-	}
-	return ""
-}
-
-type OpenAIModerationResult struct {
-	Flagged        bool               `json:"flagged"`
-	Categories     map[string]bool    `json:"categories"`
-	CategoryScores map[string]float64 `json:"category_scores"`
-}
-
-type openAIModerationResponse struct {
-	Results []OpenAIModerationResult `json:"results"`
-	Error   *struct {
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-// EvaluateOpenAIModeration decides whether a moderation result is a violation.
-// Categories with a configured threshold are judged by score alone; other
-// categories follow the upstream flag. The highest-scoring hit is reported.
-func EvaluateOpenAIModeration(result OpenAIModerationResult, thresholds map[string]float64) ModerationVerdict {
-	verdict := ModerationVerdict{Source: model.ContentModerationSourceOpenAI, CategoryScores: result.CategoryScores}
-	categories := make(map[string]struct{}, len(result.Categories)+len(result.CategoryScores))
-	for category := range result.Categories {
-		categories[category] = struct{}{}
-	}
-	for category := range result.CategoryScores {
-		categories[category] = struct{}{}
-	}
-	for category := range categories {
-		score := result.CategoryScores[category]
-		hit := result.Categories[category]
-		if threshold, ok := thresholds[category]; ok && threshold > 0 {
-			hit = score >= threshold
-		}
-		if !hit {
-			continue
-		}
-		if !verdict.Flagged || score > verdict.Score || (score == verdict.Score && category < verdict.Category) {
-			verdict.Category = category
-			verdict.Score = score
-		}
-		verdict.Flagged = true
-	}
-	return verdict
-}
-
-func requestOpenAIModeration(ctx context.Context, setting *operation_setting.ContentModerationSetting, input ModerationInput) (OpenAIModerationResult, error) {
-	parts := make([]map[string]any, 0, 2)
-	if text := truncateRunes(input.Text, moderationMaxTextRunes); text != "" {
-		parts = append(parts, map[string]any{"type": "text", "text": text})
-	}
-	if setting.CheckImages && input.ImageURL != "" && len(input.ImageURL) <= moderationMaxImageURLSize {
-		parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": input.ImageURL}})
-	}
-	if len(parts) == 0 {
-		return OpenAIModerationResult{}, nil
-	}
-	body, err := common.Marshal(map[string]any{"model": setting.OpenAIModel, "input": parts})
-	if err != nil {
-		return OpenAIModerationResult{}, err
-	}
-
-	timeout := time.Duration(max(setting.TimeoutMs, 500)) * time.Millisecond
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	baseURL := strings.TrimRight(strings.TrimSpace(setting.OpenAIBaseURL), "/")
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
-	}
-	endpoint := baseURL + "/v1/moderations"
-	if strings.HasSuffix(baseURL, "/v1") {
-		endpoint = baseURL + "/moderations"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return OpenAIModerationResult{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(setting.OpenAIAPIKey))
-
-	resp, err := GetHttpClient().Do(req)
-	if err != nil {
-		return OpenAIModerationResult{}, err
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return OpenAIModerationResult{}, err
-	}
-	var parsed openAIModerationResponse
-	if err := common.Unmarshal(respBody, &parsed); err != nil {
-		return OpenAIModerationResult{}, fmt.Errorf("moderation response status %d: %w", resp.StatusCode, err)
-	}
-	if resp.StatusCode != http.StatusOK || parsed.Error != nil {
-		message := http.StatusText(resp.StatusCode)
-		if parsed.Error != nil {
-			message = parsed.Error.Message
-		}
-		return OpenAIModerationResult{}, fmt.Errorf("moderation request failed with status %d: %s", resp.StatusCode, message)
-	}
-	if len(parsed.Results) == 0 {
-		return OpenAIModerationResult{}, errors.New("moderation response has no results")
-	}
-	return parsed.Results[0], nil
-}
-
-func truncateRunes(text string, limit int) string {
-	if utf8.RuneCountInString(text) <= limit {
-		return text
-	}
-	return string([]rune(text)[:limit])
-}
-
-func startModerationWorkers() {
-	moderationQueue = make(chan moderationJob, moderationQueueSize)
-	for range moderationWorkerCount {
-		go func() {
-			for job := range moderationQueue {
-				verdict, err := CheckModerationInput(context.Background(), job.input)
-				if err != nil {
-					common.SysError(common.LogText("content moderation observe check failed: %s", err.Error()))
-				}
-				if verdict.Flagged {
-					recordContentViolation(job, verdict, model.ContentModerationActionObserve)
-				}
-			}
-		}()
+	for index := range operation_setting.ContentModerationMaxWorkers {
+		go runModerationWorker(index)
 	}
 	go func() {
+		time.Sleep(5 * time.Minute)
 		for {
-			if days := operation_setting.GetContentModerationSetting().LogRetentionDays; days > 0 {
-				cutoff := common.GetTimestamp() - int64(days)*86400
-				if _, err := model.DeleteContentModerationLogsBefore(cutoff); err != nil {
-					common.SysError(common.LogText("failed to clean content moderation logs: %s", err.Error()))
-				}
-			}
-			time.Sleep(6 * time.Hour)
+			cleanupContentModerationLogs()
+			time.Sleep(24 * time.Hour)
 		}
 	}()
 }
 
-// recordContentViolation stores the violation and, for blocked requests,
-// disables the user once the configured number of violations is reached.
-func recordContentViolation(job moderationJob, verdict ModerationVerdict, action string) {
-	setting := operation_setting.GetContentModerationSetting()
-	now := common.GetTimestamp()
+func runModerationWorker(index int) {
+	for {
+		if index >= operation_setting.GetContentModerationConfig().WorkerCount {
+			time.Sleep(time.Second)
+			continue
+		}
+		select {
+		case job := <-moderationQueue:
+			moderationStats.activeWorkers.Add(1)
+			processModerationJob(job)
+			moderationStats.activeWorkers.Add(-1)
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func processModerationJob(job *moderationJob) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			common.SysError(common.LogText("content moderation worker panic: %v", recovered))
+		}
+	}()
+	config := operation_setting.GetContentModerationConfig()
+	if job.check {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.TimeoutMs*(config.RetryCount+1)+1000)*time.Millisecond)
+		job.outcome = runModeration(ctx, config, job.input, false)
+		cancel()
+		moderationStats.processed.Add(1)
+		if job.outcome.err != nil {
+			moderationStats.asyncErrors.Add(1)
+			common.SysError(common.LogText("content moderation async check failed: %s", job.outcome.err.Error()))
+		}
+		if !moderationShouldRecord(config, job.outcome) {
+			return
+		}
+	}
+	recordModerationJob(config, job)
+}
+
+// recordModerationJob stores the record and, for flagged requests that count
+// toward bans, disables the user once the violation threshold is reached.
+func recordModerationJob(config *operation_setting.ContentModerationConfig, job *moderationJob) {
+	outcome := job.outcome
 	entry := &model.ContentModerationLog{
-		CreatedAt:      now,
-		RequestId:      job.requestId,
-		UserId:         job.userId,
-		Username:       job.username,
-		TokenId:        job.tokenId,
-		TokenName:      job.tokenName,
-		GroupName:      job.group,
-		ModelName:      job.modelName,
-		Endpoint:       job.endpoint,
-		Action:         action,
-		Source:         verdict.Source,
-		MatchedKeyword: verdict.MatchedKeyword,
-		Category:       verdict.Category,
-		Score:          verdict.Score,
-		InputExcerpt:   truncateRunes(job.input.Text, moderationExcerptRunes),
+		CreatedAt:         common.GetTimestamp(),
+		RequestId:         job.requestId,
+		UserId:            job.userId,
+		Username:          job.username,
+		UserEmail:         job.userEmail,
+		TokenId:           job.tokenId,
+		TokenName:         job.tokenName,
+		GroupName:         job.group,
+		ModelName:         job.modelName,
+		Endpoint:          job.endpoint,
+		Mode:              job.mode,
+		Action:            model.ContentModerationActionAllow,
+		Flagged:           outcome.verdict.Flagged,
+		Source:            outcome.verdict.Source,
+		MatchedKeyword:    outcome.verdict.MatchedKeyword,
+		Category:          outcome.verdict.Category,
+		Score:             outcome.verdict.Score,
+		InputExcerpt:      moderationExcerpt(job.input),
+		InputHash:         outcome.inputHash,
+		UpstreamLatencyMs: int(outcome.upstreamLatency.Milliseconds()),
 	}
-	if job.input.ImageURL != "" {
-		entry.InputExcerpt += "\n[image]"
+	if job.logOnly {
+		entry.Mode = model.ContentModerationModeLogOnly
 	}
-	if len(verdict.CategoryScores) > 0 {
-		if encoded, err := common.Marshal(verdict.CategoryScores); err == nil {
+	if job.check {
+		entry.QueueDelayMs = int(time.Since(job.enqueuedAt).Milliseconds())
+	}
+	switch {
+	case outcome.verdict.Flagged && job.allowBlock && !job.logOnly:
+		entry.Action = outcome.blockAction
+	case outcome.err != nil:
+		entry.Action = model.ContentModerationActionError
+		entry.Error = truncateRunes(outcome.err.Error(), 500)
+	}
+	if len(outcome.verdict.CategoryScores) > 0 {
+		if encoded, err := common.Marshal(outcome.verdict.CategoryScores); err == nil {
 			entry.CategoryScores = string(encoded)
+		}
+		if encoded, err := common.Marshal(config.Thresholds); err == nil {
+			entry.ThresholdSnapshot = string(encoded)
 		}
 	}
 
-	if action == model.ContentModerationActionBlock && job.userId > 0 {
-		since := now - int64(max(setting.AutoBanWindowHours, 1))*3600
-		count, err := model.CountUserBlockedViolationsSince(job.userId, since)
+	countsTowardBan := outcome.verdict.Flagged && !job.logOnly && job.userId > 0 &&
+		outcome.blockAction != model.ContentModerationActionHashBlock
+	if countsTowardBan {
+		since := common.GetTimestamp() - int64(config.ViolationWindowHours)*3600
+		count, err := model.CountUserViolationsSinceLastBan(job.userId, since)
 		if err != nil {
 			common.SysError(common.LogText("failed to count content violations for user %d: %s", job.userId, err.Error()))
 		}
 		entry.ViolationCount = int(count) + 1
-		if setting.AutoBanEnabled && setting.AutoBanThreshold > 0 && entry.ViolationCount >= setting.AutoBanThreshold {
+		if config.AutoBanEnabled && entry.ViolationCount >= config.BanThreshold {
 			entry.AutoBanned = disableUserForContentViolations(job.userId)
 		}
 	}
@@ -548,14 +395,20 @@ func recordContentViolation(job moderationJob, verdict ModerationVerdict, action
 	}
 }
 
+// disableUserForContentViolations disables a user who reached the violation
+// threshold. It reports true when the user is (already) disabled, which also
+// restarts the violation count; administrators are never disabled.
 func disableUserForContentViolations(userId int) bool {
 	user, err := model.GetUserById(userId, true)
 	if err != nil {
 		common.SysError(common.LogText("failed to load user %d for content moderation ban: %s", userId, err.Error()))
 		return false
 	}
-	if user.Role >= common.RoleAdminUser || user.Status != common.UserStatusEnabled {
+	if user.Role >= common.RoleAdminUser {
 		return false
+	}
+	if user.Status != common.UserStatusEnabled {
+		return true
 	}
 	user.Status = common.UserStatusDisabled
 	if err := user.Update(false); err != nil {
@@ -567,4 +420,206 @@ func disableUserForContentViolations(userId int) bool {
 	}
 	common.SysLog(common.LogText("user %d disabled by content moderation", userId))
 	return true
+}
+
+func cleanupContentModerationLogs() {
+	config := operation_setting.GetContentModerationConfig()
+	now := common.GetTimestamp()
+	deletedHit, err := model.DeleteContentModerationLogsBefore(true, now-int64(config.HitRetentionDays)*86400)
+	if err != nil {
+		common.SysError(common.LogText("failed to clean content moderation hit records: %s", err.Error()))
+	}
+	deletedNonHit, err := model.DeleteContentModerationLogsBefore(false, now-int64(config.NonHitRetentionDays)*86400)
+	if err != nil {
+		common.SysError(common.LogText("failed to clean content moderation non-hit records: %s", err.Error()))
+	}
+	moderationStats.lastCleanupAt.Store(now)
+	moderationStats.lastCleanupDeletedHit.Store(deletedHit)
+	moderationStats.lastCleanupDeletedNonHit.Store(deletedNonHit)
+}
+
+// Flagged input hashes live in a Redis set without expiry; without Redis the
+// pre-check is a no-op.
+func moderationHashFlagged(hash string) bool {
+	if !common.RedisEnabled || common.RDB == nil {
+		return false
+	}
+	found, err := common.RDB.SIsMember(context.Background(), moderationHashSetKey, hash).Result()
+	return err == nil && found
+}
+
+func addModerationHash(hash string) {
+	if !common.RedisEnabled || common.RDB == nil || hash == "" {
+		return
+	}
+	if err := common.RDB.SAdd(context.Background(), moderationHashSetKey, hash).Err(); err != nil {
+		common.SysError(common.LogText("failed to store flagged content hash: %s", err.Error()))
+	}
+}
+
+func ContentModerationHashCount() int64 {
+	if !common.RedisEnabled || common.RDB == nil {
+		return 0
+	}
+	count, _ := common.RDB.SCard(context.Background(), moderationHashSetKey).Result()
+	return count
+}
+
+func DeleteContentModerationHash(hash string) (bool, error) {
+	if !common.RedisEnabled || common.RDB == nil {
+		return false, nil
+	}
+	removed, err := common.RDB.SRem(context.Background(), moderationHashSetKey, hash).Result()
+	return removed > 0, err
+}
+
+func ClearContentModerationHashes() (int64, error) {
+	count := ContentModerationHashCount()
+	if count == 0 {
+		return 0, nil
+	}
+	return count, common.RDB.Del(context.Background(), moderationHashSetKey).Err()
+}
+
+type ContentModerationStatus struct {
+	Engine       string `json:"engine"`
+	Enabled      bool   `json:"enabled"`
+	Mode         string `json:"mode"`
+	RedisEnabled bool   `json:"redis_enabled"`
+
+	PreBlockActive       int64 `json:"pre_block_active"`
+	PreBlockChecked      int64 `json:"pre_block_checked"`
+	PreBlockAllowed      int64 `json:"pre_block_allowed"`
+	PreBlockBlocked      int64 `json:"pre_block_blocked"`
+	PreBlockErrors       int64 `json:"pre_block_errors"`
+	PreBlockAvgLatencyMs int64 `json:"pre_block_avg_latency_ms"`
+
+	WorkerCount       int     `json:"worker_count"`
+	MaxWorkers        int     `json:"max_workers"`
+	ActiveWorkers     int64   `json:"active_workers"`
+	IdleWorkers       int64   `json:"idle_workers"`
+	QueueSize         int     `json:"queue_size"`
+	QueueLength       int     `json:"queue_length"`
+	QueueUsagePercent float64 `json:"queue_usage_percent"`
+	Enqueued          int64   `json:"enqueued"`
+	Dropped           int64   `json:"dropped"`
+	Processed         int64   `json:"processed"`
+	AsyncErrors       int64   `json:"async_errors"`
+
+	APIKeyCount          int                   `json:"api_key_count"`
+	APIKeyAvailableCount int                   `json:"api_key_available_count"`
+	APIKeyActive         int64                 `json:"api_key_active"`
+	APIKeyTotalCalls     int64                 `json:"api_key_total_calls"`
+	APIKeyLoads          []ModerationKeyLoad   `json:"api_key_loads"`
+	APIKeyStatuses       []ModerationKeyStatus `json:"api_key_statuses"`
+
+	FlaggedHashCount         int64 `json:"flagged_hash_count"`
+	LastCleanupAt            int64 `json:"last_cleanup_at"`
+	LastCleanupDeletedHit    int64 `json:"last_cleanup_deleted_hit"`
+	LastCleanupDeletedNonHit int64 `json:"last_cleanup_deleted_non_hit"`
+}
+
+// GetContentModerationStatus reports this process's runtime counters; they
+// reset on restart and are not shared between nodes.
+func GetContentModerationStatus() ContentModerationStatus {
+	config := operation_setting.GetContentModerationConfig()
+	status := ContentModerationStatus{
+		Engine:                   moderationSourceOpenAI,
+		Enabled:                  config.Enabled,
+		Mode:                     config.Mode,
+		RedisEnabled:             common.RedisEnabled,
+		PreBlockActive:           moderationStats.preBlockActive.Load(),
+		PreBlockChecked:          moderationStats.preBlockChecked.Load(),
+		PreBlockAllowed:          moderationStats.preBlockAllowed.Load(),
+		PreBlockBlocked:          moderationStats.preBlockBlocked.Load(),
+		PreBlockErrors:           moderationStats.preBlockErrors.Load(),
+		WorkerCount:              config.WorkerCount,
+		MaxWorkers:               operation_setting.ContentModerationMaxWorkers,
+		ActiveWorkers:            moderationStats.activeWorkers.Load(),
+		QueueSize:                config.QueueSize,
+		QueueLength:              len(moderationQueue),
+		Enqueued:                 moderationStats.enqueued.Load(),
+		Dropped:                  moderationStats.dropped.Load(),
+		Processed:                moderationStats.processed.Load(),
+		AsyncErrors:              moderationStats.asyncErrors.Load(),
+		APIKeyCount:              len(config.APIKeys),
+		APIKeyAvailableCount:     availableModerationKeyCount(config.APIKeys),
+		APIKeyStatuses:           moderationKeyStatuses(config.APIKeys, true),
+		FlaggedHashCount:         ContentModerationHashCount(),
+		LastCleanupAt:            moderationStats.lastCleanupAt.Load(),
+		LastCleanupDeletedHit:    moderationStats.lastCleanupDeletedHit.Load(),
+		LastCleanupDeletedNonHit: moderationStats.lastCleanupDeletedNonHit.Load(),
+	}
+	if status.PreBlockChecked > 0 {
+		status.PreBlockAvgLatencyMs = moderationStats.preBlockLatencyMs.Load() / status.PreBlockChecked
+	}
+	status.IdleWorkers = max(int64(config.WorkerCount)-status.ActiveWorkers, 0)
+	if config.QueueSize > 0 {
+		status.QueueUsagePercent = float64(status.QueueLength) * 100 / float64(config.QueueSize)
+	}
+	status.APIKeyLoads, status.APIKeyActive, status.APIKeyTotalCalls = moderationKeyLoads(config.APIKeys)
+	return status
+}
+
+type ContentModerationConfigView struct {
+	operation_setting.ContentModerationConfig
+	APIKeys          []string              `json:"api_keys"`
+	APIKeyConfigured bool                  `json:"api_key_configured"`
+	APIKeyCount      int                   `json:"api_key_count"`
+	APIKeyMasks      []string              `json:"api_key_masks"`
+	APIKeyStatuses   []ModerationKeyStatus `json:"api_key_statuses"`
+}
+
+// GetContentModerationConfigView returns the config without plaintext keys.
+func GetContentModerationConfigView() ContentModerationConfigView {
+	config := operation_setting.GetContentModerationConfig()
+	masks := make([]string, 0, len(config.APIKeys))
+	for _, key := range config.APIKeys {
+		masks = append(masks, maskModerationKey(key))
+	}
+	return ContentModerationConfigView{
+		ContentModerationConfig: *config,
+		APIKeys:                 []string{},
+		APIKeyConfigured:        len(config.APIKeys) > 0,
+		APIKeyCount:             len(config.APIKeys),
+		APIKeyMasks:             masks,
+		APIKeyStatuses:          moderationKeyStatuses(config.APIKeys, true),
+	}
+}
+
+// ContentModerationConfigUpdate replaces all settings except the keys, which
+// are changed through APIKeysMode, DeleteAPIKeyHashes and ClearAPIKeys so the
+// stored keys never need to be sent back to the browser.
+type ContentModerationConfigUpdate struct {
+	operation_setting.ContentModerationConfig
+	APIKeysMode        string   `json:"api_keys_mode"`
+	DeleteAPIKeyHashes []string `json:"delete_api_key_hashes"`
+	ClearAPIKeys       bool     `json:"clear_api_keys"`
+}
+
+func UpdateContentModerationConfig(update ContentModerationConfigUpdate) error {
+	current := operation_setting.GetContentModerationConfig()
+	next := update.ContentModerationConfig
+	switch {
+	case update.ClearAPIKeys:
+		next.APIKeys = []string{}
+	case update.APIKeysMode == "replace":
+	default:
+		kept := make([]string, 0, len(current.APIKeys))
+		for _, key := range current.APIKeys {
+			if !slices.Contains(update.DeleteAPIKeyHashes, moderationKeyHash(key)) {
+				kept = append(kept, key)
+			}
+		}
+		next.APIKeys = append(kept, next.APIKeys...)
+	}
+	if err := next.Validate(); err != nil {
+		return err
+	}
+	next.Normalize()
+	encoded, err := common.Marshal(next)
+	if err != nil {
+		return err
+	}
+	return model.UpdateOption(operation_setting.ContentModerationOptionKey, string(encoded))
 }

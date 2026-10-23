@@ -1,34 +1,81 @@
 package controller
 
 import (
+	"encoding/hex"
 	"net/http"
 	"strconv"
 	"strings"
-	"unicode/utf8"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 )
 
-const contentModerationTestMaxRunes = 10000
+const contentModerationTestMaxRunes = 12000
 
 func GetContentModerationStatus(c *gin.Context) {
-	setting := operation_setting.GetContentModerationSetting()
-	common.ApiSuccess(c, gin.H{
-		"openai_api_key_configured": strings.TrimSpace(setting.OpenAIAPIKey) != "",
+	common.ApiSuccess(c, service.GetContentModerationStatus())
+}
+
+func GetContentModerationConfig(c *gin.Context) {
+	common.ApiSuccess(c, service.GetContentModerationConfigView())
+}
+
+func UpdateContentModerationConfig(c *gin.Context) {
+	var update service.ContentModerationConfigUpdate
+	if err := common.DecodeJson(c.Request.Body, &update); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if err := service.UpdateContentModerationConfig(update); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, err)
+		return
+	}
+	recordManageAuditFor(c, 0, "content_moderation.config", map[string]any{
+		"enabled": update.Enabled,
+		"mode":    update.Mode,
 	})
+	common.ApiSuccess(c, service.GetContentModerationConfigView())
+}
+
+// TestContentModerationKeys checks the submitted keys (or the saved keys) and,
+// with a prompt or image, the moderation verdict for that sample. Nothing is
+// recorded.
+func TestContentModerationKeys(c *gin.Context) {
+	var req service.ModerationTestRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if len([]rune(req.Prompt)) > contentModerationTestMaxRunes || len(req.Images) > 1 || len(req.APIKeys) > 50 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	for _, image := range req.Images {
+		if len(image) > 8<<20 || (!strings.HasPrefix(image, "data:image/") && !strings.HasPrefix(image, "http://") && !strings.HasPrefix(image, "https://")) {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+			return
+		}
+	}
+	common.ApiSuccess(c, service.TestModerationKeys(c.Request.Context(), req))
 }
 
 func GetContentModerationLogs(c *gin.Context) {
 	page := common.GetPageQuery(c)
 	filter := model.ContentModerationLogFilter{
-		Username: c.Query("username"),
-		Action:   c.Query("action"),
-		Source:   c.Query("source"),
+		Result:    c.Query("result"),
+		GroupName: c.Query("group"),
+		Endpoint:  c.Query("endpoint"),
+		Search:    c.Query("search"),
+	}
+	switch filter.Result {
+	case "", model.ContentModerationResultHit, model.ContentModerationResultBlocked, model.ContentModerationResultPass, model.ContentModerationResultError:
+	default:
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
 	}
 	for name, target := range map[string]*int64{"start_timestamp": &filter.StartTimestamp, "end_timestamp": &filter.EndTimestamp} {
 		if raw := c.Query(name); raw != "" {
@@ -40,14 +87,6 @@ func GetContentModerationLogs(c *gin.Context) {
 			*target = parsed
 		}
 	}
-	if raw := c.Query("user_id"); raw != "" {
-		userId, err := strconv.Atoi(raw)
-		if err != nil || userId < 0 {
-			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
-			return
-		}
-		filter.UserId = userId
-	}
 	logs, total, err := model.GetContentModerationLogs(filter, page.GetStartIdx(), page.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
@@ -58,28 +97,8 @@ func GetContentModerationLogs(c *gin.Context) {
 	common.ApiSuccess(c, page)
 }
 
-type contentModerationTestRequest struct {
-	Text string `json:"text"`
-}
-
-// TestContentModeration runs the current keyword and OpenAI configuration on a
-// sample text without recording a log, so administrators can verify settings.
-func TestContentModeration(c *gin.Context) {
-	var req contentModerationTestRequest
-	if err := common.DecodeJson(c.Request.Body, &req); err != nil || strings.TrimSpace(req.Text) == "" || utf8.RuneCountInString(req.Text) > contentModerationTestMaxRunes {
-		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
-		return
-	}
-	verdict, err := service.CheckModerationInput(c.Request.Context(), service.ModerationInput{Text: req.Text})
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	common.ApiSuccess(c, verdict)
-}
-
-// UnbanContentModerationUser re-enables a user and records an unban entry that
-// resets the user's violation count for automatic bans.
+// UnbanContentModerationUser re-enables a user disabled by moderation. The
+// violation count already restarted when the ban was recorded.
 func UnbanContentModerationUser(c *gin.Context) {
 	userId, err := strconv.Atoi(c.Param("id"))
 	if err != nil || userId <= 0 {
@@ -101,16 +120,6 @@ func UnbanContentModerationUser(c *gin.Context) {
 			common.SysLog(common.LogText("failed to invalidate tokens cache for user %d: %s", user.Id, err.Error()))
 		}
 	}
-	if err := model.CreateContentModerationLog(&model.ContentModerationLog{
-		CreatedAt: common.GetTimestamp(),
-		UserId:    user.Id,
-		Username:  user.Username,
-		Action:    model.ContentModerationActionUnban,
-		Source:    "admin",
-	}); err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	recordManageAuditFor(c, user.Id, "user.manage", map[string]any{
 		"action":   "enable",
 		"username": user.Username,
@@ -118,4 +127,37 @@ func UnbanContentModerationUser(c *gin.Context) {
 		"source":   "content_moderation",
 	})
 	common.ApiSuccess(c, nil)
+}
+
+type contentModerationHashRequest struct {
+	InputHash string `json:"input_hash"`
+}
+
+func DeleteContentModerationHash(c *gin.Context) {
+	var req contentModerationHashRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	hash := strings.ToLower(strings.TrimSpace(req.InputHash))
+	if decoded, err := hex.DecodeString(hash); err != nil || len(decoded) != 32 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid content hash"))
+		return
+	}
+	deleted, err := service.DeleteContentModerationHash(hash)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"input_hash": hash, "deleted": deleted})
+}
+
+func ClearContentModerationHashes(c *gin.Context) {
+	deleted, err := service.ClearContentModerationHashes()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAuditFor(c, 0, "content_moderation.clear_hashes", map[string]any{"deleted": deleted, "at": time.Now().Unix()})
+	common.ApiSuccess(c, gin.H{"deleted": deleted})
 }

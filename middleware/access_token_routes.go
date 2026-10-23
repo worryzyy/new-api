@@ -170,8 +170,18 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/custom-oauth-provider/":          accessTokenScopeRule("option:write"),
 	"PUT /api/custom-oauth-provider/:id":        accessTokenScopeRule("option:write"),
 	"DELETE /api/custom-oauth-provider/:id":     accessTokenScopeRule("option:write"),
-	"GET /api/ratio_sync/channels":              accessTokenScopeRule("option:read"),
-	"POST /api/ratio_sync/fetch":                accessTokenScopeRule("option:write"),
+
+	// router/api-router.go: /api/content_moderation
+	"GET /api/content_moderation/status":           accessTokenScopeRule("option:read"),
+	"GET /api/content_moderation/config":           accessTokenScopeRule("option:read"),
+	"PUT /api/content_moderation/config":           accessTokenScopeRule("option:write"),
+	"POST /api/content_moderation/api-keys/test":   accessTokenScopeRule("option:write"),
+	"GET /api/content_moderation/logs":             accessTokenScopeRule("option:read"),
+	"POST /api/content_moderation/users/:id/unban": accessTokenScopeRule("user:write"),
+	"DELETE /api/content_moderation/hashes":        accessTokenScopeRule("option:write"),
+	"DELETE /api/content_moderation/hashes/all":    accessTokenScopeRule("option:write"),
+	"GET /api/ratio_sync/channels":                 accessTokenScopeRule("option:read"),
+	"POST /api/ratio_sync/fetch":                   accessTokenScopeRule("option:write"),
 
 	// router/api-router.go: /api/performance, /api/system-task, /api/system-info
 	"GET /api/performance/stats":                   accessTokenScopeRule("ops:read"),

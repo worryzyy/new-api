@@ -29,6 +29,15 @@ import {
 
 import type { ModerationLog, ModerationLogFilters } from '../api'
 
+const ENDPOINTS = [
+  '/v1/chat/completions',
+  '/v1/responses',
+  '/v1/messages',
+  '/v1/completions',
+  '/v1/images/generations',
+  '/v1/images/edits',
+]
+
 function FilterSelect(props: {
   label: string
   value: string
@@ -53,6 +62,7 @@ function FilterSelect(props: {
 export function ModerationLogFilterBar(props: {
   table: Table<ModerationLog>
   filters: ModerationLogFilters
+  groups: string[]
   onChange: (patch: Partial<ModerationLogFilters>) => void
   isFetching: boolean
   onSearch: () => void
@@ -86,48 +96,66 @@ export function ModerationLogFilterBar(props: {
   const mainFilters = (
     <>
       <FilterSelect
-        label={t('Action')}
-        value={props.filters.action ?? 'all'}
+        label={t('Result')}
+        value={props.filters.result ?? 'all'}
         options={[
-          { value: 'all', label: t('All actions') },
-          { value: 'block', label: t('Blocked') },
-          { value: 'observe', label: t('Observed') },
-          { value: 'unban', label: t('Unbanned') },
+          { value: 'all', label: t('All results') },
+          { value: 'hit', label: t('Hit') },
+          { value: 'blocked', label: t('Blocked') },
+          { value: 'pass', label: t('Passed') },
+          { value: 'error', label: t('Moderation error') },
         ]}
         onChange={(value) =>
-          props.onChange({ action: value === 'all' ? undefined : value })
+          props.onChange({ result: value === 'all' ? undefined : value })
         }
       />
       <FilterSelect
-        label={t('Source')}
-        value={props.filters.source ?? 'all'}
+        label={t('Group')}
+        value={props.filters.group ?? 'all'}
         options={[
-          { value: 'all', label: t('All sources') },
-          { value: 'keyword', label: t('Keyword') },
-          { value: 'openai', label: 'OpenAI' },
+          { value: 'all', label: t('All groups') },
+          ...props.groups.map((group) => ({ value: group, label: group })),
         ]}
         onChange={(value) =>
-          props.onChange({ source: value === 'all' ? undefined : value })
+          props.onChange({ group: value === 'all' ? undefined : value })
         }
       />
     </>
   )
   const advancedFilters = (
-    <LogsFilterField>
-      <LogsFilterInput
-        aria-label={t('Username')}
-        placeholder={t('Username')}
-        value={props.filters.username ?? ''}
-        onChange={(event) =>
-          props.onChange({ username: event.target.value || undefined })
+    <>
+      <FilterSelect
+        label={t('Endpoint')}
+        value={props.filters.endpoint ?? 'all'}
+        options={[
+          { value: 'all', label: t('All endpoints') },
+          ...ENDPOINTS.map((endpoint) => ({
+            value: endpoint,
+            label: endpoint,
+          })),
+        ]}
+        onChange={(value) =>
+          props.onChange({ endpoint: value === 'all' ? undefined : value })
         }
       />
-    </LogsFilterField>
+      <LogsFilterField>
+        <LogsFilterInput
+          aria-label={t('Search')}
+          placeholder={t('Request ID, user, key, model or input')}
+          value={props.filters.search ?? ''}
+          onChange={(event) =>
+            props.onChange({ search: event.target.value || undefined })
+          }
+        />
+      </LogsFilterField>
+    </>
   )
-  const advancedCount = props.filters.username ? 1 : 0
+  const advancedCount = [props.filters.endpoint, props.filters.search].filter(
+    Boolean
+  ).length
   const filterCount =
     advancedCount +
-    [props.filters.action, props.filters.source].filter(Boolean).length
+    [props.filters.result, props.filters.group].filter(Boolean).length
   return (
     <LogsFilterToolbar
       table={props.table}

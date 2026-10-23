@@ -159,10 +159,16 @@ export function useSidebarData(): SidebarData {
             icon: CreditCard,
           },
           {
-            title: t('Content Moderation'),
-            url: '/content-moderation',
+            title: t('Security audit'),
             icon: ShieldAlert,
             requiredRole: ROLE.SUPER_ADMIN,
+            items: [
+              {
+                title: t('Content audit'),
+                url: '/content-moderation',
+                requiredRole: ROLE.SUPER_ADMIN,
+              },
+            ],
           },
           {
             title: t('System Info'),

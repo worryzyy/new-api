@@ -20,39 +20,71 @@ import type { TFunction } from 'i18next'
 
 import type { StatusVariant } from '@/components/status-badge'
 
-type ReasonSource = {
-  source?: string
-  matched_keyword?: string
-  category?: string
-  score?: number
+import type { ModerationKeyStatus, ModerationLog, ModerationMode } from '../api'
+
+export function moderationModeLabel(
+  mode: ModerationMode,
+  t: TFunction
+): string {
+  switch (mode) {
+    case 'pre_block':
+      return t('Pre-block')
+    case 'observe':
+      return t('Observe only')
+    default:
+      return t('Off')
+  }
 }
 
-export function moderationReason(entry: ReasonSource, t: TFunction): string {
-  if (entry.source === 'keyword') {
-    return t('Keyword: {{keyword}}', { keyword: entry.matched_keyword ?? '' })
-  }
-  if (entry.source === 'openai' && entry.category) {
-    return t('{{category}} (score {{score}})', {
-      category: entry.category,
-      score: (entry.score ?? 0).toFixed(3),
-    })
-  }
-  if (entry.source === 'admin') return t('Unbanned by administrator')
-  return entry.source ?? ''
-}
-
-export function moderationActionBadge(
-  action: string,
+export function moderationResultBadge(
+  entry: Pick<ModerationLog, 'action' | 'flagged'>,
   t: TFunction
 ): { label: string; variant: StatusVariant } {
-  switch (action) {
+  switch (entry.action) {
     case 'block':
       return { label: t('Blocked'), variant: 'danger' }
-    case 'observe':
-      return { label: t('Observed'), variant: 'warning' }
-    case 'unban':
-      return { label: t('Unbanned'), variant: 'success' }
+    case 'keyword_block':
+      return { label: t('Keyword blocked'), variant: 'danger' }
+    case 'hash_block':
+      return { label: t('Hash blocked'), variant: 'danger' }
+    case 'error':
+      return { label: t('Moderation error'), variant: 'warning' }
     default:
-      return { label: action, variant: 'neutral' }
+      return entry.flagged
+        ? { label: t('Hit'), variant: 'warning' }
+        : { label: t('Passed'), variant: 'success' }
+  }
+}
+
+export function keyStatusBadge(
+  status: ModerationKeyStatus['status'],
+  t: TFunction
+): { label: string; variant: StatusVariant } {
+  switch (status) {
+    case 'ok':
+      return { label: t('Healthy'), variant: 'success' }
+    case 'frozen':
+      return { label: t('Frozen'), variant: 'danger' }
+    case 'error':
+      return { label: t('Error'), variant: 'warning' }
+    default:
+      return { label: t('Unchecked'), variant: 'neutral' }
+  }
+}
+
+export function formatPercent(score: number): string {
+  return `${(score * 100).toFixed(1)}%`
+}
+
+export function parseScoreMap(raw: string): [string, number][] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return []
+    return Object.entries(parsed).filter(
+      (entry): entry is [string, number] => typeof entry[1] === 'number'
+    )
+  } catch {
+    return []
   }
 }

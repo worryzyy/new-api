@@ -236,9 +236,13 @@ func SetApiRouter(router *gin.Engine) {
 		contentModerationRoute.Use(middleware.RootAuth())
 		{
 			contentModerationRoute.GET("/status", controller.GetContentModerationStatus)
+			contentModerationRoute.GET("/config", controller.GetContentModerationConfig)
+			contentModerationRoute.PUT("/config", controller.UpdateContentModerationConfig)
+			contentModerationRoute.POST("/api-keys/test", controller.TestContentModerationKeys)
 			contentModerationRoute.GET("/logs", controller.GetContentModerationLogs)
-			contentModerationRoute.POST("/test", controller.TestContentModeration)
 			contentModerationRoute.POST("/users/:id/unban", controller.UnbanContentModerationUser)
+			contentModerationRoute.DELETE("/hashes", controller.DeleteContentModerationHash)
+			contentModerationRoute.DELETE("/hashes/all", controller.ClearContentModerationHashes)
 		}
 
 		// Custom OAuth provider management (root only)

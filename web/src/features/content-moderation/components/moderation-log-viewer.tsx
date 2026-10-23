@@ -16,43 +16,39 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import type { UseQueryResult } from '@tanstack/react-query'
+import type { Dispatch, SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
 
-import {
-  getModerationLogs,
-  type ModerationLog,
-  type ModerationLogFilters,
-} from '../api'
+import type { ModerationLog, ModerationLogFilters } from '../api'
 import { useModerationLogColumns } from './moderation-log-columns'
 import { ModerationLogFilterBar } from './moderation-log-filter-bar'
 
 const EMPTY_LOGS: ModerationLog[] = []
 
-export function ModerationLogViewer() {
+export function ModerationLogViewer(props: {
+  query: UseQueryResult<{ items: ModerationLog[]; total: number }>
+  filters: ModerationLogFilters
+  setFilters: Dispatch<SetStateAction<ModerationLogFilters>>
+  groups: string[]
+}) {
   const { t } = useTranslation()
-  const [filters, setFilters] = useState<ModerationLogFilters>({
-    p: 1,
-    page_size: 20,
-  })
-  const query = useQuery({
-    queryKey: ['content-moderation', 'logs', filters],
-    queryFn: () => getModerationLogs(filters),
-    retry: false,
-  })
+  const query = props.query
   const columns = useModerationLogColumns()
   const { table } = useDataTable({
     columns,
     data: query.isError ? EMPTY_LOGS : (query.data?.items ?? EMPTY_LOGS),
     getRowId: (entry) => String(entry.id),
     totalCount: query.isError ? 0 : (query.data?.total ?? 0),
-    pagination: { pageIndex: filters.p - 1, pageSize: filters.page_size },
+    pagination: {
+      pageIndex: props.filters.p - 1,
+      pageSize: props.filters.page_size,
+    },
     onPaginationChange: (updater) => {
       if (query.isFetching) return
-      setFilters((previous) => {
+      props.setFilters((previous) => {
         const current = {
           pageIndex: previous.p - 1,
           pageSize: previous.page_size,
@@ -83,19 +79,22 @@ export function ModerationLogViewer() {
           : t('No records')
       }
       paginationInFooter
-      className='h-auto min-h-0 flex-1'
+      className='h-auto min-h-[420px]'
       applyHeaderSize
       getColumnClassName={() => 'py-2'}
       toolbar={
         <ModerationLogFilterBar
           table={table}
-          filters={filters}
+          filters={props.filters}
+          groups={props.groups}
           onChange={(patch) =>
-            setFilters((previous) => ({ ...previous, ...patch, p: 1 }))
+            props.setFilters((previous) => ({ ...previous, ...patch, p: 1 }))
           }
           isFetching={query.isFetching}
           onSearch={() => void query.refetch()}
-          onReset={() => setFilters({ p: 1, page_size: filters.page_size })}
+          onReset={() =>
+            props.setFilters({ p: 1, page_size: props.filters.page_size })
+          }
         />
       }
     />
