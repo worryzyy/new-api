@@ -31,6 +31,7 @@ import {
   Radio,
   ServerCog,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   Ticket,
   User,
@@ -156,6 +157,12 @@ export function useSidebarData(): SidebarData {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,
+          },
+          {
+            title: t('Content Moderation'),
+            url: '/content-moderation',
+            icon: ShieldAlert,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('System Info'),

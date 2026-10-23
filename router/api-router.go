@@ -232,6 +232,15 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.GET("/waffo-pancake/subscription-product-options", controller.ListWaffoPancakeSubscriptionProductOptions)
 		}
 
+		contentModerationRoute := apiRouter.Group("/content_moderation", middleware.DisableCache())
+		contentModerationRoute.Use(middleware.RootAuth())
+		{
+			contentModerationRoute.GET("/status", controller.GetContentModerationStatus)
+			contentModerationRoute.GET("/logs", controller.GetContentModerationLogs)
+			contentModerationRoute.POST("/test", controller.TestContentModeration)
+			contentModerationRoute.POST("/users/:id/unban", controller.UnbanContentModerationUser)
+		}
+
 		// Custom OAuth provider management (root only)
 		customOAuthRoute := apiRouter.Group("/custom-oauth-provider")
 		customOAuthRoute.Use(middleware.RootAuth())

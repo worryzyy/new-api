@@ -279,6 +279,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 		info.IsStream = true
 		common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
+		if apiErr = service.ModerateRelayRequest(c, info); apiErr != nil {
+			return apiErr
+		}
 		if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
 			return apiErr
 		}
@@ -305,6 +308,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
 				common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
+				if apiErr = service.ModerateRelayRequest(c, info); apiErr != nil {
+					return apiErr
+				}
 				if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
 					return apiErr
 				}
