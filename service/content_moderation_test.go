@@ -2,8 +2,11 @@ package service
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,8 +15,13 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/glebarez/sqlite"
+	sqlmysql "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func TestExtractModerationInputUsesLatestUserTurn(t *testing.T) {
@@ -314,4 +322,128 @@ func TestUpdateContentModerationConfigKeepsAndRemovesKeys(t *testing.T) {
 	invalid := ContentModerationConfigUpdate{ContentModerationConfig: base}
 	invalid.BlockStatus = 200
 	assert.Error(t, UpdateContentModerationConfig(invalid))
+}
+
+// TestContentModerationDatabaseMatrix exercises the moderation tables and
+// queries on real databases. MySQL and PostgreSQL run when
+// CONTENT_MODERATION_MYSQL_DSN / CONTENT_MODERATION_POSTGRES_DSN point at a
+// dedicated, empty loopback database.
+func TestContentModerationDatabaseMatrix(t *testing.T) {
+	cases := []struct {
+		name   string
+		env    string
+		dbType common.DatabaseType
+	}{
+		{"sqlite", "", common.DatabaseTypeSQLite},
+		{"mysql", "CONTENT_MODERATION_MYSQL_DSN", common.DatabaseTypeMySQL},
+		{"postgres", "CONTENT_MODERATION_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var dialector gorm.Dialector
+			switch tc.name {
+			case "sqlite":
+				dialector = sqlite.Open(t.TempDir() + "/moderation.db")
+			case "mysql":
+				dsn := os.Getenv(tc.env)
+				if dsn == "" {
+					t.Skip(tc.env + " is not configured")
+				}
+				config, err := sqlmysql.ParseDSN(dsn)
+				require.NoError(t, err)
+				host, _, err := net.SplitHostPort(config.Addr)
+				require.NoError(t, err)
+				require.True(t, net.ParseIP(host).IsLoopback(), "database tests only permit loopback instances")
+				dialector = mysql.Open(dsn)
+			default:
+				dsn := os.Getenv(tc.env)
+				if dsn == "" {
+					t.Skip(tc.env + " is not configured")
+				}
+				parsed, err := url.Parse(dsn)
+				require.NoError(t, err)
+				require.True(t, net.ParseIP(parsed.Hostname()).IsLoopback(), "database tests only permit loopback instances")
+				dialector = postgres.Open(dsn)
+			}
+			db, err := gorm.Open(dialector, &gorm.Config{})
+			require.NoError(t, err)
+			originalDB := model.DB
+			model.DB = db
+			common.SetDatabaseTypes(tc.dbType, tc.dbType)
+			t.Cleanup(func() {
+				model.DB = originalDB
+				common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+				operation_setting.LoadContentModerationConfig("")
+				if sqlDB, err := db.DB(); err == nil {
+					_ = sqlDB.Close()
+				}
+			})
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Option{}, &model.ContentModerationLog{}))
+			}
+
+			user := &model.User{Username: "cm_matrix", Status: common.UserStatusDisabled, Role: common.RoleCommonUser, Group: "default", AffCode: "cmmx"}
+			require.NoError(t, db.Create(user).Error)
+			now := common.GetTimestamp()
+			records := []model.ContentModerationLog{
+				{CreatedAt: now - 10, UserId: user.Id, Action: model.ContentModerationActionBlock, Flagged: true, Mode: "pre_block", GroupName: "vip", Endpoint: "/v1/responses", InputExcerpt: "contains SecretWord here"},
+				{CreatedAt: now - 9, UserId: user.Id, Action: model.ContentModerationActionKeywordBlock, Flagged: true, Mode: "pre_block", GroupName: "default", Endpoint: "/v1/chat/completions"},
+				{CreatedAt: now - 8, UserId: user.Id, Action: model.ContentModerationActionHashBlock, Flagged: true, Mode: "pre_block"},
+				{CreatedAt: now - 7, UserId: user.Id, Action: model.ContentModerationActionAllow, Flagged: true, Mode: model.ContentModerationModeLogOnly},
+				{CreatedAt: now - 6, UserId: user.Id, Action: model.ContentModerationActionAllow, Flagged: false, Mode: "pre_block"},
+				{CreatedAt: now - 5, UserId: user.Id, Action: model.ContentModerationActionError, Flagged: false, Mode: "pre_block", Error: "timeout"},
+				{CreatedAt: now - 400000, UserId: user.Id, Action: model.ContentModerationActionAllow, Flagged: false, Mode: "pre_block"},
+			}
+			for i := range records {
+				require.NoError(t, model.CreateContentModerationLog(&records[i]))
+			}
+
+			count, err := model.CountUserViolationsSinceLastBan(user.Id, now-3600)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), count, "hash blocks, exempt-user records and non-hits do not count")
+			require.NoError(t, model.CreateContentModerationLog(&model.ContentModerationLog{CreatedAt: now - 4, UserId: user.Id, Action: model.ContentModerationActionBlock, Flagged: true, Mode: "pre_block", AutoBanned: true}))
+			count, err = model.CountUserViolationsSinceLastBan(user.Id, now-3600)
+			require.NoError(t, err)
+			assert.Equal(t, int64(0), count, "counting restarts after an automatic ban")
+
+			filters := map[string]struct {
+				filter model.ContentModerationLogFilter
+				total  int64
+			}{
+				"hit":      {model.ContentModerationLogFilter{Result: model.ContentModerationResultHit}, 5},
+				"blocked":  {model.ContentModerationLogFilter{Result: model.ContentModerationResultBlocked}, 4},
+				"pass":     {model.ContentModerationLogFilter{Result: model.ContentModerationResultPass}, 2},
+				"error":    {model.ContentModerationLogFilter{Result: model.ContentModerationResultError}, 1},
+				"group":    {model.ContentModerationLogFilter{GroupName: "vip"}, 1},
+				"endpoint": {model.ContentModerationLogFilter{Endpoint: "/v1/chat/completions"}, 1},
+				"search":   {model.ContentModerationLogFilter{Search: "secretword"}, 1},
+				"time":     {model.ContentModerationLogFilter{StartTimestamp: now - 3600, EndTimestamp: now - 9}, 2},
+			}
+			for name, expected := range filters {
+				logs, total, err := model.GetContentModerationLogs(expected.filter, 0, 20)
+				require.NoError(t, err, name)
+				assert.Equal(t, expected.total, total, name)
+				for _, log := range logs {
+					assert.Equal(t, common.UserStatusDisabled, log.UserStatus, name)
+				}
+			}
+
+			deleted, err := model.DeleteContentModerationLogsBefore(false, now-3600)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), deleted, "only the old non-hit is removed")
+
+			common.OptionMapRWMutex.Lock()
+			if common.OptionMap == nil {
+				common.OptionMap = map[string]string{}
+			}
+			common.OptionMapRWMutex.Unlock()
+			update := ContentModerationConfigUpdate{ContentModerationConfig: operation_setting.DefaultContentModerationConfig(), APIKeysMode: "replace"}
+			update.APIKeys = []string{"matrix-key"}
+			update.Enabled = true
+			require.NoError(t, UpdateContentModerationConfig(update))
+			var stored model.Option
+			require.NoError(t, db.Where(map[string]any{"key": operation_setting.ContentModerationOptionKey}).First(&stored).Error)
+			assert.Contains(t, stored.Value, "matrix-key")
+		})
+	}
 }
