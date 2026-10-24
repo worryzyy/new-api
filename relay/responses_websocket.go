@@ -256,6 +256,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		// reads a termination decision after this point on the WebSocket path,
 		// so neither policy record belongs here.
 		if info != nil && billingPrepared {
+			service.RecordUpstreamCyberPolicy(c, info, apiErr)
 			apiErr = RefundFailedRequestBilling(c, info, apiErr)
 		}
 	}()
@@ -279,6 +280,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 		info.IsStream = true
 		common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
+		if apiErr = service.CheckCyberSessionBlocked(c, info); apiErr != nil {
+			return apiErr
+		}
 		if apiErr = service.ModerateRelayRequest(c, info); apiErr != nil {
 			return apiErr
 		}
@@ -308,6 +312,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
 				common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
+				if apiErr = service.CheckCyberSessionBlocked(c, info); apiErr != nil {
+					return apiErr
+				}
 				if apiErr = service.ModerateRelayRequest(c, info); apiErr != nil {
 					return apiErr
 				}
@@ -443,6 +450,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 								code = fmt.Sprint(rejection.Error.Code)
 							}
 							info.StreamStatus.MarkFailed(code, rejection.Error.Type, rejection.Status)
+							if service.IsCyberPolicyCode(code) {
+								info.CyberPolicyMessage = rejection.Error.Message
+							}
 						}
 						accumulator.Observe(&event.ResponsesStreamResponse, incoming.body)
 						info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)

@@ -64,6 +64,7 @@ const FIELD_TABS: Partial<Record<keyof ModerationFormValues, TabKey>> = {
   block_message: 'hit',
   ban_threshold: 'hit',
   violation_window_hours: 'hit',
+  cyber_session_block_ttl_seconds: 'hit',
   thresholds: 'thresholds',
   blocked_keywords: 'keywords',
   hit_retention_days: 'retention',
@@ -173,7 +174,7 @@ export function ModerationSettingsDialog(props: {
               <QueueTab status={props.status} />
             </TabsContent>
             <TabsContent value='hit' className='pt-4'>
-              <HitTab />
+              <HitTab status={props.status} />
             </TabsContent>
             <TabsContent value='thresholds' className='pt-4'>
               <ThresholdsTab />

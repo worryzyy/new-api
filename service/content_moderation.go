@@ -377,21 +377,28 @@ func recordModerationJob(config *operation_setting.ContentModerationConfig, job 
 		}
 	}
 
-	countsTowardBan := outcome.verdict.Flagged && !job.logOnly && job.userId > 0 &&
-		outcome.blockAction != model.ContentModerationActionHashBlock
-	if countsTowardBan {
-		since := common.GetTimestamp() - int64(config.ViolationWindowHours)*3600
-		count, err := model.CountUserViolationsSinceLastBan(job.userId, since)
-		if err != nil {
-			common.SysError(common.LogText("failed to count content violations for user %d: %s", job.userId, err.Error()))
-		}
-		entry.ViolationCount = int(count) + 1
-		if config.AutoBanEnabled && entry.ViolationCount >= config.BanThreshold {
-			entry.AutoBanned = disableUserForContentViolations(job.userId)
-		}
+	if outcome.verdict.Flagged && !job.logOnly && outcome.blockAction != model.ContentModerationActionHashBlock {
+		countContentViolation(config, entry)
 	}
 	if err := model.CreateContentModerationLog(entry); err != nil {
 		common.SysError(common.LogText("failed to record content moderation log: %s", err.Error()))
+	}
+}
+
+// countContentViolation sets the violation count of a record that counts
+// toward automatic bans and disables the user once the threshold is reached.
+func countContentViolation(config *operation_setting.ContentModerationConfig, entry *model.ContentModerationLog) {
+	if entry.UserId <= 0 {
+		return
+	}
+	since := common.GetTimestamp() - int64(config.ViolationWindowHours)*3600
+	count, err := model.CountUserViolationsSinceLastBan(entry.UserId, since, config.CyberPolicyExcludeFromBanCount)
+	if err != nil {
+		common.SysError(common.LogText("failed to count content violations for user %d: %s", entry.UserId, err.Error()))
+	}
+	entry.ViolationCount = int(count) + 1
+	if config.AutoBanEnabled && entry.ViolationCount >= config.BanThreshold {
+		entry.AutoBanned = disableUserForContentViolations(entry.UserId)
 	}
 }
 
@@ -517,6 +524,9 @@ type ContentModerationStatus struct {
 	LastCleanupAt            int64 `json:"last_cleanup_at"`
 	LastCleanupDeletedHit    int64 `json:"last_cleanup_deleted_hit"`
 	LastCleanupDeletedNonHit int64 `json:"last_cleanup_deleted_non_hit"`
+
+	CyberPolicyHits     int64 `json:"cyber_policy_hits"`
+	CyberSessionBlocked int64 `json:"cyber_session_blocked"`
 }
 
 // GetContentModerationStatus reports this process's runtime counters; they
@@ -549,6 +559,8 @@ func GetContentModerationStatus() ContentModerationStatus {
 		LastCleanupAt:            moderationStats.lastCleanupAt.Load(),
 		LastCleanupDeletedHit:    moderationStats.lastCleanupDeletedHit.Load(),
 		LastCleanupDeletedNonHit: moderationStats.lastCleanupDeletedNonHit.Load(),
+		CyberPolicyHits:          cyberStats.hits.Load(),
+		CyberSessionBlocked:      cyberStats.sessionBlocked.Load(),
 	}
 	if status.PreBlockChecked > 0 {
 		status.PreBlockAvgLatencyMs = moderationStats.preBlockLatencyMs.Load() / status.PreBlockChecked

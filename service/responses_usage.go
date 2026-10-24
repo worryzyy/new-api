@@ -117,7 +117,8 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 
 // ObserveResponsesOutcome records the protocol outcome of one Responses event
 // on the stream status for health classification. Only codes and types are
-// kept; messages never leave the event.
+// kept; messages never leave the event, except the cyber_policy message kept
+// on info for the content audit record.
 func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesStreamResponse) {
 	if info == nil || info.StreamStatus == nil || event == nil {
 		return
@@ -128,16 +129,20 @@ func ObserveResponsesOutcome(info *relaycommon.RelayInfo, event *dto.ResponsesSt
 	}
 	switch {
 	case event.Type == "error" || event.Type == "response.failed" || event.Type == "response.error" || responseStatus == "failed":
-		code, errorType := event.Code, ""
+		code, errorType, message := event.Code, "", event.Message
 		if event.Response != nil {
 			if oaiErr := event.Response.GetOpenAIError(); oaiErr != nil {
 				if oaiErr.Code != nil {
 					code = fmt.Sprint(oaiErr.Code)
 				}
 				errorType = oaiErr.Type
+				message = oaiErr.Message
 			}
 		}
 		info.StreamStatus.MarkFailed(code, errorType, 0)
+		if IsCyberPolicyCode(code) {
+			info.CyberPolicyMessage = message
+		}
 	case event.Type == "response.incomplete" || responseStatus == "incomplete":
 		reason := ""
 		if event.Response != nil && event.Response.IncompleteDetails != nil {

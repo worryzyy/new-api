@@ -48,6 +48,8 @@ export function ModerationLogDetailsDialog(props: { entry: ModerationLog }) {
   if (entry.source === 'openai') sourceLabel = 'OpenAI'
   if (entry.source === 'keyword') sourceLabel = t('Keyword')
   if (entry.source === 'hash') sourceLabel = t('Flagged content hash')
+  if (entry.source === 'upstream') sourceLabel = t('Upstream response')
+  const isCyber = entry.action === 'cyber_policy'
 
   return (
     <Dialog
@@ -126,9 +128,19 @@ export function ModerationLogDetailsDialog(props: { entry: ModerationLog }) {
           {entry.group_name && <GroupBadge group={entry.group_name} />}
         </div>
         <pre className='bg-muted mt-2 max-h-60 overflow-y-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap'>
-          {entry.error || entry.input_excerpt || '—'}
+          {(isCyber
+            ? entry.input_excerpt
+            : entry.error || entry.input_excerpt) || '—'}
         </pre>
       </DetailSection>
+
+      {isCyber && (
+        <DetailSection label={t('Upstream response')}>
+          <pre className='bg-muted max-h-60 overflow-y-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap'>
+            {entry.error || '—'}
+          </pre>
+        </DetailSection>
+      )}
 
       {scores.length > 0 && (
         <DetailSection label={t('Category scores')}>

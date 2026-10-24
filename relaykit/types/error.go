@@ -41,6 +41,7 @@ const (
 	ErrorCodeInvalidRequest         ErrorCode = "invalid_request"
 	ErrorCodeSensitiveWordsDetected ErrorCode = "sensitive_words_detected"
 	ErrorCodeContentPolicyViolation ErrorCode = "content_policy_violation"
+	ErrorCodeCyberSessionBlocked    ErrorCode = "session_blocked_by_cyber_policy"
 	ErrorCodeViolationFeeGrokCSAM   ErrorCode = "violation_fee.grok.csam"
 
 	// new api error

@@ -8,6 +8,13 @@ const (
 	ContentModerationActionKeywordBlock = "keyword_block"
 	ContentModerationActionHashBlock    = "hash_block"
 	ContentModerationActionError        = "error"
+	// ContentModerationActionCyberPolicy records an upstream rejection with
+	// error code cyber_policy; the request already reached the upstream.
+	ContentModerationActionCyberPolicy = "cyber_policy"
+
+	// ContentModerationModePostUpstream marks records written after the
+	// upstream answered, as opposed to the moderation modes.
+	ContentModerationModePostUpstream = "post_upstream"
 
 	// ContentModerationModeLogOnly marks records of exempt users, which are
 	// never blocked and never counted toward automatic bans.
@@ -17,6 +24,7 @@ const (
 	ContentModerationResultBlocked = "blocked"
 	ContentModerationResultPass    = "pass"
 	ContentModerationResultError   = "error"
+	ContentModerationResultCyber   = "cyber_policy"
 )
 
 // ContentModerationLog records one moderated request. Passing requests are only
@@ -67,18 +75,22 @@ func CreateContentModerationLog(log *ContentModerationLog) error {
 
 // CountUserViolationsSinceLastBan counts flagged records of a user inside the
 // window that count toward automatic bans. Hash blocks and exempt-user records
-// are excluded, and counting restarts after the latest automatic ban.
-func CountUserViolationsSinceLastBan(userId int, since int64) (int64, error) {
+// are excluded, cyber_policy records too when excludeCyber is set, and counting
+// restarts after the latest automatic ban.
+func CountUserViolationsSinceLastBan(userId int, since int64, excludeCyber bool) (int64, error) {
 	var lastBan ContentModerationLog
 	if err := DB.Select("id").Where("user_id = ? AND auto_banned = ?", userId, true).
 		Order("id desc").Limit(1).Find(&lastBan).Error; err != nil {
 		return 0, err
 	}
-	var count int64
-	err := DB.Model(&ContentModerationLog{}).
+	tx := DB.Model(&ContentModerationLog{}).
 		Where("user_id = ? AND flagged = ? AND created_at >= ? AND id > ? AND action <> ? AND (mode IS NULL OR mode <> ?)",
-			userId, true, since, lastBan.Id, ContentModerationActionHashBlock, ContentModerationModeLogOnly).
-		Count(&count).Error
+			userId, true, since, lastBan.Id, ContentModerationActionHashBlock, ContentModerationModeLogOnly)
+	if excludeCyber {
+		tx = tx.Where("action <> ?", ContentModerationActionCyberPolicy)
+	}
+	var count int64
+	err := tx.Count(&count).Error
 	return count, err
 }
 
@@ -93,6 +105,8 @@ func GetContentModerationLogs(filter ContentModerationLogFilter, startIdx int, p
 		tx = tx.Where("flagged = ? AND action <> ?", false, ContentModerationActionError)
 	case ContentModerationResultError:
 		tx = tx.Where("action = ?", ContentModerationActionError)
+	case ContentModerationResultCyber:
+		tx = tx.Where("action = ?", ContentModerationActionCyberPolicy)
 	}
 	if filter.GroupName != "" {
 		tx = tx.Where("group_name = ?", filter.GroupName)

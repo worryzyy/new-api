@@ -102,6 +102,7 @@ export function ModerationLogFilterBar(props: {
           { value: 'all', label: t('All results') },
           { value: 'hit', label: t('Hit') },
           { value: 'blocked', label: t('Blocked') },
+          { value: 'cyber_policy', label: t('Cyber policy') },
           { value: 'pass', label: t('Passed') },
           { value: 'error', label: t('Moderation error') },
         ]}

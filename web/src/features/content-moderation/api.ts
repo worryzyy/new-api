@@ -57,6 +57,9 @@ export interface ModerationConfig {
   keyword_blocking_mode: KeywordBlockingMode
   hit_retention_days: number
   non_hit_retention_days: number
+  cyber_policy_exclude_from_ban_count: boolean
+  cyber_session_block_enabled: boolean
+  cyber_session_block_ttl_seconds: number
 }
 
 export interface ModerationKeyStatus {
@@ -134,6 +137,8 @@ export interface ModerationStatus {
   last_cleanup_at: number
   last_cleanup_deleted_hit: number
   last_cleanup_deleted_non_hit: number
+  cyber_policy_hits: number
+  cyber_session_blocked: number
 }
 
 export type ModerationAction =
@@ -142,6 +147,7 @@ export type ModerationAction =
   | 'keyword_block'
   | 'hash_block'
   | 'error'
+  | 'cyber_policy'
 
 export interface ModerationLog {
   id: number

@@ -35,6 +35,7 @@ relay.task_usage_price_unsupported: "Model {{.Model}} uses a task usage expressi
 relay.shared_task_price_needs_override: "Model {{.Model}} shares its billing expression with task plugin {{.Plugin}}; configure a separate plugin billing expression before using ordinary relay pricing"
 relay.task_channel_disabled: "The channel of this task has been disabled"
 relay.content_policy_violation: "The request was blocked by the content safety policy. Please revise your input and try again."
+relay.cyber_session_blocked: "This conversation was blocked by the upstream cyber-security policy. Please start a new conversation."
 relay.group_saturated: "The current group is at capacity. Please try again later, or upgrade your account for better service."
 relay.group_upstream_saturated: "The upstream of the current group is at capacity. Please try again later"
 relay.retry_get_channel_failed: "Failed to get available channel for model {{.Model}} under group {{.Group}} (retry): {{.Error}}"

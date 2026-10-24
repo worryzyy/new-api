@@ -36,6 +36,7 @@ import {
   SettingsFormGrid,
 } from '@/features/system-settings/components/settings-form-layout'
 
+import type { ModerationStatus } from '../../api'
 import {
   MAX_BLOCKED_KEYWORDS,
   MODERATION_CATEGORIES,
@@ -45,10 +46,11 @@ import {
 } from '../../lib/config-form'
 import { NumberField, RadioCards, SwitchField } from './fields'
 
-export function HitTab() {
+export function HitTab(props: { status?: ModerationStatus }) {
   const { t } = useTranslation()
   const form = useFormContext<ModerationFormValues>()
   const autoBan = form.watch('auto_ban_enabled')
+  const sessionBlock = form.watch('cyber_session_block_enabled')
   return (
     <div className='flex flex-col gap-5'>
       <SettingsFormGrid>
@@ -107,6 +109,64 @@ export function HitTab() {
           />
         </SettingsFormGrid>
       )}
+      <section className='flex flex-col gap-4 rounded-lg border p-4'>
+        <div className='flex flex-col gap-1'>
+          <span className='text-sm font-medium'>
+            {t('Upstream cyber_policy')}
+          </span>
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'When OpenAI rejects a request with error code cyber_policy, the rejection is recorded as an audit hit. It follows the audit switch and scope, but not the moderation mode or sampling.'
+            )}
+          </p>
+          <p className='text-muted-foreground text-xs tabular-nums'>
+            {t(
+              'Since this process started: {{hits}} cyber_policy hits, {{blocked}} session blocks',
+              {
+                hits: props.status?.cyber_policy_hits ?? 0,
+                blocked: props.status?.cyber_session_blocked ?? 0,
+              }
+            )}
+          </p>
+        </div>
+        <SettingsControlGroup>
+          <SwitchField
+            control={form.control}
+            name='cyber_policy_exclude_from_ban_count'
+            label={t('Do not count cyber_policy toward bans')}
+            description={t(
+              'cyber_policy hits are still recorded but no longer count toward automatic bans, including earlier hits.'
+            )}
+          />
+          <SwitchField
+            control={form.control}
+            name='cyber_session_block_enabled'
+            label={t('Block cyber_policy sessions')}
+            description={t(
+              'Rejects further requests of a conversation that upstream rejected with cyber_policy, without sending them upstream. Only that conversation is blocked; other conversations of the same key are not affected. Exempt users are never blocked.'
+            )}
+          />
+        </SettingsControlGroup>
+        {sessionBlock && (
+          <SettingsFormGrid>
+            <NumberField
+              control={form.control}
+              name='cyber_session_block_ttl_seconds'
+              label={t('Session block duration (seconds)')}
+              description={t('1-2592000 seconds.')}
+            />
+          </SettingsFormGrid>
+        )}
+        {sessionBlock && props.status && !props.status.redis_enabled && (
+          <Alert>
+            <AlertDescription>
+              {t(
+                'Redis is not enabled, so cyber_policy sessions are not blocked.'
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+      </section>
     </div>
   )
 }

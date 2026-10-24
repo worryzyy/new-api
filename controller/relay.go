@@ -157,6 +157,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		defer stopKeepAlive()
 	}
 
+	if newAPIError = service.CheckCyberSessionBlocked(c, relayInfo); newAPIError != nil {
+		return
+	}
 	if newAPIError = service.ModerateRelayRequest(c, relayInfo); newAPIError != nil {
 		return
 	}
@@ -218,12 +221,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		if newAPIError == nil {
+			// A stream that upstream failed with cyber_policy still ends here.
+			service.RecordUpstreamCyberPolicy(c, relayInfo, nil)
 			service.MarkRequestPolicySuccess(c, relayInfo.StreamStatus)
 			relayInfo.LastError = nil
 			return
 		}
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
+		if service.IsCyberPolicyError(newAPIError) {
+			// Every channel of the same upstream would reject it again.
+			types.ErrOptionWithSkipRetry()(newAPIError)
+			service.RecordUpstreamCyberPolicy(c, relayInfo, newAPIError)
+		}
 		relayInfo.LastError = newAPIError
 
 		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())

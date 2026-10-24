@@ -33,6 +33,8 @@ const (
 	contentModerationMaxKeywordLength    = 200
 	contentModerationMaxFilterModels     = 1000
 	contentModerationMaxFilterModelChars = 200
+
+	contentModerationMaxSessionBlockTTL = 30 * 86400
 )
 
 // ContentModerationCategories lists the OpenAI omni-moderation categories with
@@ -97,6 +99,15 @@ type ContentModerationConfig struct {
 
 	HitRetentionDays    int `json:"hit_retention_days"`
 	NonHitRetentionDays int `json:"non_hit_retention_days"`
+
+	// CyberPolicyExcludeFromBanCount keeps upstream cyber_policy rejections
+	// out of the automatic ban count, both for the hit itself and for the
+	// history counted by later violations.
+	CyberPolicyExcludeFromBanCount bool `json:"cyber_policy_exclude_from_ban_count"`
+	// CyberSessionBlockEnabled rejects, for the TTL, further requests of a
+	// conversation that upstream already rejected with cyber_policy.
+	CyberSessionBlockEnabled    bool `json:"cyber_session_block_enabled"`
+	CyberSessionBlockTTLSeconds int  `json:"cyber_session_block_ttl_seconds"`
 }
 
 func DefaultContentModerationConfig() ContentModerationConfig {
@@ -128,6 +139,8 @@ func DefaultContentModerationConfig() ContentModerationConfig {
 		KeywordBlockingMode:  ContentModerationKeywordAndAPI,
 		HitRetentionDays:     180,
 		NonHitRetentionDays:  3,
+
+		CyberSessionBlockTTLSeconds: 3600,
 	}
 }
 
@@ -232,6 +245,10 @@ func (c *ContentModerationConfig) Normalize() {
 	}
 	c.HitRetentionDays = min(c.HitRetentionDays, 3650)
 	c.NonHitRetentionDays = min(max(c.NonHitRetentionDays, 1), 3)
+	if c.CyberSessionBlockTTLSeconds <= 0 {
+		c.CyberSessionBlockTTLSeconds = defaults.CyberSessionBlockTTLSeconds
+	}
+	c.CyberSessionBlockTTLSeconds = min(c.CyberSessionBlockTTLSeconds, contentModerationMaxSessionBlockTTL)
 }
 
 // Validate rejects values an administrator submitted that cannot be applied.
@@ -252,7 +269,8 @@ func (c *ContentModerationConfig) Validate() error {
 		c.SampleRate < 0 || c.SampleRate > 100 || c.WorkerCount < 0 || c.WorkerCount > ContentModerationMaxWorkers ||
 		c.QueueSize < 0 || c.QueueSize > ContentModerationMaxQueueSize || c.BanThreshold < 0 || c.BanThreshold > 1000 ||
 		c.ViolationWindowHours < 0 || c.ViolationWindowHours > 8760 || c.HitRetentionDays < 0 || c.HitRetentionDays > 3650 ||
-		c.NonHitRetentionDays < 0 || c.NonHitRetentionDays > 3 {
+		c.NonHitRetentionDays < 0 || c.NonHitRetentionDays > 3 ||
+		c.CyberSessionBlockTTLSeconds < 0 || c.CyberSessionBlockTTLSeconds > contentModerationMaxSessionBlockTTL {
 		return common.NewMessage("Moderation setting is out of range")
 	}
 	if c.BlockStatus != 0 && (c.BlockStatus < 400 || c.BlockStatus > 599) {

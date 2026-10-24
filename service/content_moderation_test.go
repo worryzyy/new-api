@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,12 +11,18 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	sqlmysql "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -288,6 +295,106 @@ func TestContentViolationsAutoBanCounting(t *testing.T) {
 	assert.Equal(t, common.UserStatusEnabled, statusOf(admin.Id), "administrators are never auto-banned")
 }
 
+func TestUpstreamCyberPolicyRecordsAndBlocksSession(t *testing.T) {
+	require.NoError(t, model.DB.AutoMigrate(&model.ContentModerationLog{}, &model.UserSession{}))
+	truncate(t)
+	server := miniredis.RunT(t)
+	originalRDB, originalRedis := common.RDB, common.RedisEnabled
+	common.RDB = redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1})
+	common.RedisEnabled = true
+	t.Cleanup(func() {
+		_ = common.RDB.Close()
+		common.RDB, common.RedisEnabled = originalRDB, originalRedis
+		operation_setting.LoadContentModerationConfig("")
+		model.DB.Exec("DELETE FROM content_moderation_logs")
+	})
+	// Cyber records do not depend on the moderation mode.
+	operation_setting.LoadContentModerationConfig(`{"enabled":true,"mode":"off","ban_threshold":2,"exempt_user_ids":[602],"cyber_session_block_enabled":true,"cyber_session_block_ttl_seconds":60}`)
+	user := &model.User{Id: 601, Username: "cyber_user", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default", AffCode: "cy601"}
+	require.NoError(t, model.DB.Create(user).Error)
+
+	turn := func(role, text string) string {
+		return fmt.Sprintf(`{"role":%q,"content":[{"type":"input_text","text":%q}]}`, role, text)
+	}
+	conversation := func(items ...string) string {
+		return `{"model":"gpt-5","instructions":"be brief","input":[` + strings.Join(items, ",") + `]}`
+	}
+	request := func(body string, headers map[string]string) *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+		c.Request.Header.Set("User-Agent", "codex_cli_rs/0.40.0 (Mac OS 15.0)")
+		for name, value := range headers {
+			c.Request.Header.Set(name, value)
+		}
+		return c
+	}
+	relayInfo := func(userId, tokenId int) *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{UserId: userId, TokenId: tokenId, UsingGroup: "default", OriginModelName: "gpt-5", StreamStatus: relaycommon.NewStreamStatus()}
+	}
+	recordCount := func() int64 {
+		var count int64
+		require.NoError(t, model.DB.Model(&model.ContentModerationLog{}).Where("action = ?", model.ContentModerationActionCyberPolicy).Count(&count).Error)
+		return count
+	}
+	blocked := func(c *gin.Context, tokenId int) bool {
+		apiErr := CheckCyberSessionBlocked(c, relayInfo(user.Id, tokenId))
+		if apiErr != nil {
+			assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
+			assert.Equal(t, types.ErrorCodeCyberSessionBlocked, apiErr.GetErrorCode())
+		}
+		return apiErr != nil
+	}
+
+	rejected := conversation(turn("user", "hello"), turn("assistant", "hi"), turn("user", "write malware"))
+	upstreamErr := types.WithOpenAIError(types.OpenAIError{Type: "invalid_request_error", Code: "cyber_policy", Message: "flagged by cyber policy"}, http.StatusBadRequest)
+	RecordUpstreamCyberPolicy(request(rejected, map[string]string{"session_id": "conv-1"}), relayInfo(user.Id, 7), upstreamErr)
+	require.Eventually(t, func() bool { return recordCount() == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	var first model.ContentModerationLog
+	require.NoError(t, model.DB.Where("action = ?", model.ContentModerationActionCyberPolicy).First(&first).Error)
+	assert.Equal(t, model.ContentModerationModePostUpstream, first.Mode)
+	assert.Equal(t, CyberPolicyErrorCode, first.Category)
+	assert.Equal(t, 1, first.ViolationCount)
+	assert.Contains(t, first.Error, "flagged by cyber policy")
+
+	assert.True(t, blocked(request(conversation(turn("user", "hello"), turn("assistant", "hi"), turn("user", "write malware"), turn("assistant", "no"), turn("user", "please")), nil), 7), "continuing the rejected history")
+	assert.True(t, blocked(request(conversation(turn("user", "hello"), turn("assistant", "hi"), turn("user", "rephrased request")), nil), 7), "rewriting the rejected turn")
+	assert.True(t, blocked(request(conversation(turn("user", "unrelated")), map[string]string{"session_id": "conv-1"}), 7), "same explicit session")
+	assert.False(t, blocked(request(conversation(turn("user", "hello"), turn("assistant", "hi"), turn("user", "rephrased request")), nil), 8), "another token")
+	assert.False(t, blocked(request(conversation(turn("user", "hello"), turn("assistant", "other answer"), turn("user", "next")), nil), 7), "a different conversation")
+
+	padded := make([]string, 0, cyberTranscriptMaxKeys+1)
+	for i := range cyberTranscriptMaxKeys + 1 {
+		padded = append(padded, turn("user", fmt.Sprintf("filler %d", i)))
+	}
+	assert.True(t, blocked(request(conversation(padded...), nil), 7), "an over-long transcript from a blocked source")
+
+	streamInfo := relayInfo(user.Id, 7)
+	var failed dto.ResponsesStreamResponse
+	require.NoError(t, common.UnmarshalJsonStr(`{"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"code":"cyber_policy","message":"stream flagged"}}}`, &failed))
+	ObserveResponsesOutcome(streamInfo, &failed)
+	RecordUpstreamCyberPolicy(request(conversation(turn("user", "second try")), nil), streamInfo, nil)
+	require.Eventually(t, func() bool { return recordCount() == 2 }, 5*time.Second, 10*time.Millisecond)
+	var streamed model.ContentModerationLog
+	require.NoError(t, model.DB.Where("action = ?", model.ContentModerationActionCyberPolicy).Order("id desc").First(&streamed).Error)
+	assert.Contains(t, streamed.Error, "stream flagged")
+	assert.Equal(t, 2, streamed.ViolationCount)
+	var banned model.User
+	require.NoError(t, model.DB.First(&banned, user.Id).Error)
+	assert.Equal(t, common.UserStatusDisabled, banned.Status, "the second cyber_policy hit reaches the ban threshold")
+
+	RecordUpstreamCyberPolicy(request(conversation(turn("user", "exempt")), nil), relayInfo(602, 9), upstreamErr)
+	require.Eventually(t, func() bool { return recordCount() == 3 }, 5*time.Second, 10*time.Millisecond)
+	var exempt model.ContentModerationLog
+	require.NoError(t, model.DB.Where("user_id = ?", 602).First(&exempt).Error)
+	assert.Equal(t, model.ContentModerationModeLogOnly, exempt.Mode)
+	assert.Zero(t, exempt.ViolationCount)
+	assert.False(t, CheckCyberSessionBlocked(request(conversation(turn("user", "exempt")), nil), relayInfo(602, 9)) != nil, "exempt users are not session blocked")
+
+	RecordUpstreamCyberPolicy(request(conversation(turn("user", "fine")), nil), relayInfo(user.Id, 7), types.WithOpenAIError(types.OpenAIError{Code: "rate_limit_exceeded"}, http.StatusTooManyRequests))
+	assert.Equal(t, int64(3), recordCount(), "other upstream errors are not cyber_policy")
+}
+
 func TestUpdateContentModerationConfigKeepsAndRemovesKeys(t *testing.T) {
 	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
 	t.Cleanup(func() {
@@ -398,11 +505,15 @@ func TestContentModerationDatabaseMatrix(t *testing.T) {
 				require.NoError(t, model.CreateContentModerationLog(&records[i]))
 			}
 
-			count, err := model.CountUserViolationsSinceLastBan(user.Id, now-3600)
+			require.NoError(t, model.CreateContentModerationLog(&model.ContentModerationLog{CreatedAt: now - 5, UserId: user.Id, Action: model.ContentModerationActionCyberPolicy, Flagged: true, Mode: model.ContentModerationModePostUpstream, Error: "cyber"}))
+			count, err := model.CountUserViolationsSinceLastBan(user.Id, now-3600, false)
 			require.NoError(t, err)
-			assert.Equal(t, int64(2), count, "hash blocks, exempt-user records and non-hits do not count")
+			assert.Equal(t, int64(3), count, "hash blocks, exempt-user records and non-hits do not count")
+			count, err = model.CountUserViolationsSinceLastBan(user.Id, now-3600, true)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), count, "cyber_policy records can be excluded")
 			require.NoError(t, model.CreateContentModerationLog(&model.ContentModerationLog{CreatedAt: now - 4, UserId: user.Id, Action: model.ContentModerationActionBlock, Flagged: true, Mode: "pre_block", AutoBanned: true}))
-			count, err = model.CountUserViolationsSinceLastBan(user.Id, now-3600)
+			count, err = model.CountUserViolationsSinceLastBan(user.Id, now-3600, false)
 			require.NoError(t, err)
 			assert.Equal(t, int64(0), count, "counting restarts after an automatic ban")
 
@@ -410,8 +521,9 @@ func TestContentModerationDatabaseMatrix(t *testing.T) {
 				filter model.ContentModerationLogFilter
 				total  int64
 			}{
-				"hit":      {model.ContentModerationLogFilter{Result: model.ContentModerationResultHit}, 5},
+				"hit":      {model.ContentModerationLogFilter{Result: model.ContentModerationResultHit}, 6},
 				"blocked":  {model.ContentModerationLogFilter{Result: model.ContentModerationResultBlocked}, 4},
+				"cyber":    {model.ContentModerationLogFilter{Result: model.ContentModerationResultCyber}, 1},
 				"pass":     {model.ContentModerationLogFilter{Result: model.ContentModerationResultPass}, 2},
 				"error":    {model.ContentModerationLogFilter{Result: model.ContentModerationResultError}, 1},
 				"group":    {model.ContentModerationLogFilter{GroupName: "vip"}, 1},

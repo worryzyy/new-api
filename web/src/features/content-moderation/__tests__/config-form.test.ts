@@ -53,6 +53,9 @@ const savedConfig: ModerationConfigView = {
   keyword_blocking_mode: 'keyword_and_api',
   hit_retention_days: 180,
   non_hit_retention_days: 3,
+  cyber_policy_exclude_from_ban_count: false,
+  cyber_session_block_enabled: true,
+  cyber_session_block_ttl_seconds: 3600,
   api_key_configured: true,
   api_key_count: 1,
   api_key_masks: ['********OMkA'],
@@ -82,6 +85,8 @@ describe('buildConfigUpdate', () => {
     expect(update.groups).toEqual(['vip'])
     expect(update.exempt_user_ids).toEqual([7, 9])
     expect(update.blocked_keywords).toEqual(['alpha', 'beta'])
+    expect(update.cyber_session_block_enabled).toBe(true)
+    expect(update.cyber_session_block_ttl_seconds).toBe(3600)
   })
 
   it('sends new keys and drops scope lists that do not apply', () => {

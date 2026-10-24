@@ -44,6 +44,7 @@ const (
 	MsgRelaySharedTaskPriceNeedsOverride = "relay.shared_task_price_needs_override"
 	MsgRelayTaskChannelDisabled          = "relay.task_channel_disabled"
 	MsgRelayContentPolicyViolation       = "relay.content_policy_violation"
+	MsgRelayCyberSessionBlocked          = "relay.cyber_session_blocked"
 	MsgRelayGroupSaturated               = "relay.group_saturated"
 	MsgRelayGroupUpstreamSaturated       = "relay.group_upstream_saturated"
 	MsgRelayRetryGetChannelFailed        = "relay.retry_get_channel_failed"

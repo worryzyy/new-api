@@ -142,29 +142,43 @@ export function useModerationLogColumns(): ColumnDef<ModerationLog>[] {
         id: 'disposition',
         header: t('Disposition'),
         size: 130,
-        cell: ({ row }) => (
-          <div className='flex flex-col items-start gap-1 text-xs'>
-            {row.original.violation_count > 0 && (
-              <span className='tabular-nums'>
-                {t('Violation {{count}}', {
-                  count: row.original.violation_count,
-                })}
-              </span>
-            )}
-            {row.original.auto_banned && (
-              <StatusBadge
-                label={t('User disabled')}
-                variant='danger'
-                copyable={false}
-              />
-            )}
-            {row.original.auto_banned &&
-              row.original.user_status === USER_STATUS_DISABLED && (
-                <UnbanUserButton entry={row.original} />
+        cell: ({ row }) => {
+          const entry = row.original
+          // A cyber_policy hit is excluded from the count when configured so.
+          const notCounted =
+            entry.action === 'cyber_policy' &&
+            entry.mode !== 'log_only' &&
+            !entry.violation_count
+          return (
+            <div className='flex flex-col items-start gap-1 text-xs'>
+              {entry.violation_count > 0 && (
+                <span className='tabular-nums'>
+                  {t('Violation {{count}}', { count: entry.violation_count })}
+                </span>
               )}
-            {!row.original.violation_count && !row.original.auto_banned && '—'}
-          </div>
-        ),
+              {entry.auto_banned && (
+                <StatusBadge
+                  label={t('User disabled')}
+                  variant='danger'
+                  copyable={false}
+                />
+              )}
+              {entry.auto_banned &&
+                entry.user_status === USER_STATUS_DISABLED && (
+                  <UnbanUserButton entry={entry} />
+                )}
+              {notCounted && (
+                <span className='text-muted-foreground'>
+                  {t('Not counted toward bans')}
+                </span>
+              )}
+              {!entry.violation_count &&
+                !entry.auto_banned &&
+                !notCounted &&
+                '—'}
+            </div>
+          )
+        },
         meta: { label: t('Disposition') },
       },
       {

@@ -82,6 +82,9 @@ export const moderationFormSchema = z
     ]),
     hit_retention_days: integer(1, 3650),
     non_hit_retention_days: integer(1, 3),
+    cyber_policy_exclude_from_ban_count: z.boolean(),
+    cyber_session_block_enabled: z.boolean(),
+    cyber_session_block_ttl_seconds: integer(1, 2592000),
   })
   .superRefine((values, context) => {
     if (!values.all_groups && values.groups.length === 0) {
@@ -178,6 +181,11 @@ export function formValuesFromConfig(
     keyword_blocking_mode: config.keyword_blocking_mode,
     hit_retention_days: config.hit_retention_days,
     non_hit_retention_days: config.non_hit_retention_days,
+    cyber_policy_exclude_from_ban_count:
+      config.cyber_policy_exclude_from_ban_count ?? false,
+    cyber_session_block_enabled: config.cyber_session_block_enabled ?? false,
+    cyber_session_block_ttl_seconds:
+      config.cyber_session_block_ttl_seconds || 3600,
   }
 }
 
@@ -228,5 +236,9 @@ export function buildConfigUpdate(
     keyword_blocking_mode: values.keyword_blocking_mode,
     hit_retention_days: values.hit_retention_days,
     non_hit_retention_days: values.non_hit_retention_days,
+    cyber_policy_exclude_from_ban_count:
+      values.cyber_policy_exclude_from_ban_count,
+    cyber_session_block_enabled: values.cyber_session_block_enabled,
+    cyber_session_block_ttl_seconds: values.cyber_session_block_ttl_seconds,
   }
 }
