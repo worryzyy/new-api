@@ -56,6 +56,17 @@ const savedConfig: ModerationConfigView = {
   cyber_policy_exclude_from_ban_count: false,
   cyber_session_block_enabled: true,
   cyber_session_block_ttl_seconds: 3600,
+  judge_enabled: true,
+  judge_mode: 'observe',
+  judge_base_url: 'https://api.deepseek.com',
+  judge_model: 'deepseek-chat',
+  judge_api_keys: [],
+  judge_timeout_ms: 8000,
+  judge_rules: 'saved rules',
+  judge_threshold: 0.8,
+  judge_count_toward_ban: false,
+  judge_api_key_statuses: [],
+  judge_default_rules: 'default rules',
   api_key_configured: true,
   api_key_count: 1,
   api_key_masks: ['********OMkA'],
@@ -89,6 +100,23 @@ describe('buildConfigUpdate', () => {
     expect(update.cyber_session_block_ttl_seconds).toBe(3600)
   })
 
+  it('shows the judge threshold as a percentage and keeps saved judge keys unless new ones are entered', () => {
+    const values = formValuesFromConfig(savedConfig)
+    expect(values.judge_threshold).toBe(80)
+
+    const kept = buildConfigUpdate(values)
+    expect(kept.judge_threshold).toBe(0.8)
+    expect(kept.judge_api_keys).toEqual([])
+    expect(kept.clear_judge_api_keys).toBe(false)
+    expect(kept.judge_rules).toBe('saved rules')
+
+    const replaced = buildConfigUpdate({
+      ...values,
+      judge_new_api_keys: ' sk-judge \n',
+    })
+    expect(replaced.judge_api_keys).toEqual(['sk-judge'])
+  })
+
   it('sends new keys and drops scope lists that do not apply', () => {
     const values = {
       ...formValuesFromConfig(savedConfig),
@@ -117,6 +145,20 @@ describe('moderationFormSchema', () => {
     const paths = result.error?.issues.map((issue) => issue.path.join('.'))
     expect(paths).toEqual(
       expect.arrayContaining(['groups', 'model_filter_models'])
+    )
+  })
+
+  it('rejects a judge threshold outside 1-100 and over-long judge rules', () => {
+    const result = moderationFormSchema.safeParse({
+      ...formValuesFromConfig(savedConfig),
+      judge_threshold: 0,
+      judge_rules: 'x'.repeat(8001),
+    })
+
+    expect(result.success).toBe(false)
+    const paths = result.error?.issues.map((issue) => issue.path.join('.'))
+    expect(paths).toEqual(
+      expect.arrayContaining(['judge_threshold', 'judge_rules'])
     )
   })
 

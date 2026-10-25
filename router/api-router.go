@@ -240,6 +240,8 @@ func SetApiRouter(router *gin.Engine) {
 			contentModerationRoute.PUT("/config", controller.UpdateContentModerationConfig)
 			contentModerationRoute.POST("/api-keys/test", controller.TestContentModerationKeys)
 			contentModerationRoute.GET("/logs", controller.GetContentModerationLogs)
+			contentModerationRoute.GET("/logs/:id", controller.GetContentModerationLog)
+			contentModerationRoute.POST("/judge/test", controller.TestContentModerationJudge)
 			contentModerationRoute.POST("/users/:id/unban", controller.UnbanContentModerationUser)
 			contentModerationRoute.DELETE("/hashes", controller.DeleteContentModerationHash)
 			contentModerationRoute.DELETE("/hashes/all", controller.ClearContentModerationHashes)

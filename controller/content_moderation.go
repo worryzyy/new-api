@@ -72,7 +72,8 @@ func GetContentModerationLogs(c *gin.Context) {
 		Search:    c.Query("search"),
 	}
 	switch filter.Result {
-	case "", model.ContentModerationResultHit, model.ContentModerationResultBlocked, model.ContentModerationResultPass, model.ContentModerationResultError:
+	case "", model.ContentModerationResultHit, model.ContentModerationResultBlocked, model.ContentModerationResultPass, model.ContentModerationResultError,
+		model.ContentModerationResultCyber, model.ContentModerationResultJudge:
 	default:
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
 		return
@@ -95,6 +96,36 @@ func GetContentModerationLogs(c *gin.Context) {
 	page.SetItems(logs)
 	page.SetTotal(int(total))
 	common.ApiSuccess(c, page)
+}
+
+// GetContentModerationLog returns one record with its full, unredacted input.
+func GetContentModerationLog(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	log, err := model.GetContentModerationLog(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, log)
+}
+
+// TestContentModerationJudge runs the LLM judge on a sample with the unsaved
+// form values. Nothing is cached or recorded.
+func TestContentModerationJudge(c *gin.Context) {
+	var req service.JudgeTestRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" || len([]rune(req.Prompt)) > contentModerationTestMaxRunes || len(req.APIKeys) > 50 {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
+	common.ApiSuccess(c, service.TestJudge(c.Request.Context(), req))
 }
 
 // UnbanContentModerationUser re-enables a user disabled by moderation. The

@@ -122,7 +122,9 @@ func RecordUpstreamCyberPolicy(c *gin.Context, info *relaycommon.RelayInfo, apiE
 		Error:     moderationExcerpt(ModerationInput{Text: message}),
 	}
 	if info.Request != nil {
-		entry.InputExcerpt = moderationExcerpt(ExtractModerationInput(info.Request))
+		input := ExtractModerationInput(info.Request)
+		entry.InputExcerpt = moderationExcerpt(input)
+		entry.InputFull = moderationFullInput(input)
 	}
 	if logOnly {
 		entry.Mode = model.ContentModerationModeLogOnly

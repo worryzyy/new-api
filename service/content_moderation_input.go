@@ -249,3 +249,16 @@ func moderationExcerpt(input ModerationInput) string {
 	}
 	return strings.TrimSpace(text)
 }
+
+// moderationFullInput is the unredacted input stored with flagged records so
+// administrators can review exactly what was sent.
+func moderationFullInput(input ModerationInput) string {
+	text := truncateRunes(input.Text, moderationMaxTextRunes)
+	if utf8.RuneCountInString(input.Text) > moderationMaxTextRunes {
+		text += "\n[truncated]"
+	}
+	if input.ImageURL != "" {
+		text += "\n[image]"
+	}
+	return strings.TrimSpace(text)
+}

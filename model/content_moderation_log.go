@@ -7,6 +7,7 @@ const (
 	ContentModerationActionBlock        = "block"
 	ContentModerationActionKeywordBlock = "keyword_block"
 	ContentModerationActionHashBlock    = "hash_block"
+	ContentModerationActionJudgeBlock   = "judge_block"
 	ContentModerationActionError        = "error"
 	// ContentModerationActionCyberPolicy records an upstream rejection with
 	// error code cyber_policy; the request already reached the upstream.
@@ -25,6 +26,10 @@ const (
 	ContentModerationResultPass    = "pass"
 	ContentModerationResultError   = "error"
 	ContentModerationResultCyber   = "cyber_policy"
+	ContentModerationResultJudge   = "judge"
+
+	// ContentModerationSourceJudge marks verdicts of the LLM judge.
+	ContentModerationSourceJudge = "judge"
 )
 
 // ContentModerationLog records one moderated request. Passing requests are only
@@ -51,13 +56,17 @@ type ContentModerationLog struct {
 	CategoryScores    string  `json:"category_scores" gorm:"type:text"`
 	ThresholdSnapshot string  `json:"threshold_snapshot" gorm:"type:text"`
 	InputExcerpt      string  `json:"input_excerpt" gorm:"type:text"`
-	InputHash         string  `json:"input_hash" gorm:"type:varchar(64)"`
-	Error             string  `json:"error" gorm:"type:text"`
-	UpstreamLatencyMs int     `json:"upstream_latency_ms"`
-	QueueDelayMs      int     `json:"queue_delay_ms"`
-	ViolationCount    int     `json:"violation_count"`
-	AutoBanned        bool    `json:"auto_banned"`
-	UserStatus        int     `json:"user_status" gorm:"-"`
+	// InputFull is the unredacted latest user turn, kept for flagged records
+	// only and returned by the detail endpoint, not the list.
+	InputFull         string `json:"input_full,omitempty" gorm:"type:text"`
+	JudgeReason       string `json:"judge_reason" gorm:"type:text"`
+	InputHash         string `json:"input_hash" gorm:"type:varchar(64)"`
+	Error             string `json:"error" gorm:"type:text"`
+	UpstreamLatencyMs int    `json:"upstream_latency_ms"`
+	QueueDelayMs      int    `json:"queue_delay_ms"`
+	ViolationCount    int    `json:"violation_count"`
+	AutoBanned        bool   `json:"auto_banned"`
+	UserStatus        int    `json:"user_status" gorm:"-"`
 }
 
 type ContentModerationLogFilter struct {
@@ -75,9 +84,9 @@ func CreateContentModerationLog(log *ContentModerationLog) error {
 
 // CountUserViolationsSinceLastBan counts flagged records of a user inside the
 // window that count toward automatic bans. Hash blocks and exempt-user records
-// are excluded, cyber_policy records too when excludeCyber is set, and counting
-// restarts after the latest automatic ban.
-func CountUserViolationsSinceLastBan(userId int, since int64, excludeCyber bool) (int64, error) {
+// are excluded, cyber_policy and judge records too when excludeCyber or
+// excludeJudge is set, and counting restarts after the latest automatic ban.
+func CountUserViolationsSinceLastBan(userId int, since int64, excludeCyber bool, excludeJudge bool) (int64, error) {
 	var lastBan ContentModerationLog
 	if err := DB.Select("id").Where("user_id = ? AND auto_banned = ?", userId, true).
 		Order("id desc").Limit(1).Find(&lastBan).Error; err != nil {
@@ -88,6 +97,9 @@ func CountUserViolationsSinceLastBan(userId int, since int64, excludeCyber bool)
 			userId, true, since, lastBan.Id, ContentModerationActionHashBlock, ContentModerationModeLogOnly)
 	if excludeCyber {
 		tx = tx.Where("action <> ?", ContentModerationActionCyberPolicy)
+	}
+	if excludeJudge {
+		tx = tx.Where("(source IS NULL OR source <> ?)", ContentModerationSourceJudge)
 	}
 	var count int64
 	err := tx.Count(&count).Error
@@ -100,13 +112,15 @@ func GetContentModerationLogs(filter ContentModerationLogFilter, startIdx int, p
 	case ContentModerationResultHit:
 		tx = tx.Where("flagged = ?", true)
 	case ContentModerationResultBlocked:
-		tx = tx.Where("action IN ?", []string{ContentModerationActionBlock, ContentModerationActionKeywordBlock, ContentModerationActionHashBlock})
+		tx = tx.Where("action IN ?", []string{ContentModerationActionBlock, ContentModerationActionKeywordBlock, ContentModerationActionHashBlock, ContentModerationActionJudgeBlock})
 	case ContentModerationResultPass:
 		tx = tx.Where("flagged = ? AND action <> ?", false, ContentModerationActionError)
 	case ContentModerationResultError:
 		tx = tx.Where("action = ?", ContentModerationActionError)
 	case ContentModerationResultCyber:
 		tx = tx.Where("action = ?", ContentModerationActionCyberPolicy)
+	case ContentModerationResultJudge:
+		tx = tx.Where("flagged = ? AND source = ?", true, ContentModerationSourceJudge)
 	}
 	if filter.GroupName != "" {
 		tx = tx.Where("group_name = ?", filter.GroupName)
@@ -132,7 +146,7 @@ func GetContentModerationLogs(filter ContentModerationLogFilter, startIdx int, p
 		return nil, 0, err
 	}
 	logs := make([]*ContentModerationLog, 0)
-	if err := tx.Order("id desc").Offset(startIdx).Limit(pageSize).Find(&logs).Error; err != nil {
+	if err := tx.Omit("input_full").Order("id desc").Offset(startIdx).Limit(pageSize).Find(&logs).Error; err != nil {
 		return nil, 0, err
 	}
 	userIds := make([]int, 0, len(logs))
@@ -156,6 +170,15 @@ func GetContentModerationLogs(filter ContentModerationLogFilter, startIdx int, p
 		log.UserStatus = statuses[log.UserId]
 	}
 	return logs, total, nil
+}
+
+// GetContentModerationLog returns one record including its full input.
+func GetContentModerationLog(id int) (*ContentModerationLog, error) {
+	var log ContentModerationLog
+	if err := DB.First(&log, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &log, nil
 }
 
 // DeleteContentModerationLogsBefore removes flagged or unflagged records older

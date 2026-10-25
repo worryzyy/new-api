@@ -144,9 +144,11 @@ export function useModerationLogColumns(): ColumnDef<ModerationLog>[] {
         size: 130,
         cell: ({ row }) => {
           const entry = row.original
-          // A cyber_policy hit is excluded from the count when configured so.
+          // cyber_policy and judge hits are excluded from the count when
+          // configured so.
           const notCounted =
-            entry.action === 'cyber_policy' &&
+            (entry.action === 'cyber_policy' ||
+              (entry.source === 'judge' && entry.flagged)) &&
             entry.mode !== 'log_only' &&
             !entry.violation_count
           return (

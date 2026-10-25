@@ -41,6 +41,7 @@ import {
   type ModerationFormValues,
 } from '../../lib/config-form'
 import { BasicTab } from './basic-tab'
+import { JudgeTab } from './judge-tab'
 import { HitTab, KeywordsTab, ThresholdsTab } from './policy-tabs'
 import { QueueTab, RetentionTab } from './runtime-tabs'
 import { ScopeTab } from './scope-tab'
@@ -52,6 +53,7 @@ type TabKey =
   | 'hit'
   | 'thresholds'
   | 'keywords'
+  | 'judge'
   | 'retention'
 
 const FIELD_TABS: Partial<Record<keyof ModerationFormValues, TabKey>> = {
@@ -67,6 +69,11 @@ const FIELD_TABS: Partial<Record<keyof ModerationFormValues, TabKey>> = {
   cyber_session_block_ttl_seconds: 'hit',
   thresholds: 'thresholds',
   blocked_keywords: 'keywords',
+  judge_base_url: 'judge',
+  judge_model: 'judge',
+  judge_timeout_ms: 'judge',
+  judge_rules: 'judge',
+  judge_threshold: 'judge',
   hit_retention_days: 'retention',
   non_hit_retention_days: 'retention',
 }
@@ -122,6 +129,7 @@ export function ModerationSettingsDialog(props: {
     { key: 'hit', label: t('Hit handling') },
     { key: 'thresholds', label: t('Risk thresholds') },
     { key: 'keywords', label: t('Keyword blocking') },
+    { key: 'judge', label: t('LLM judge') },
     { key: 'retention', label: t('Log retention') },
   ]
 
@@ -181,6 +189,9 @@ export function ModerationSettingsDialog(props: {
             </TabsContent>
             <TabsContent value='keywords' className='pt-4'>
               <KeywordsTab />
+            </TabsContent>
+            <TabsContent value='judge' className='pt-4'>
+              <JudgeTab config={props.config} status={props.status} />
             </TabsContent>
             <TabsContent value='retention' className='pt-4'>
               <RetentionTab status={props.status} />

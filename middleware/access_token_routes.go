@@ -177,6 +177,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"PUT /api/content_moderation/config":           accessTokenScopeRule("option:write"),
 	"POST /api/content_moderation/api-keys/test":   accessTokenScopeRule("option:write"),
 	"GET /api/content_moderation/logs":             accessTokenScopeRule("option:read"),
+	"GET /api/content_moderation/logs/:id":         accessTokenScopeRule("option:read"),
+	"POST /api/content_moderation/judge/test":      accessTokenScopeRule("option:write"),
 	"POST /api/content_moderation/users/:id/unban": accessTokenScopeRule("user:write"),
 	"DELETE /api/content_moderation/hashes":        accessTokenScopeRule("option:write"),
 	"DELETE /api/content_moderation/hashes/all":    accessTokenScopeRule("option:write"),

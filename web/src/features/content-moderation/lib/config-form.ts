@@ -37,6 +37,7 @@ export const MODERATION_CATEGORIES: { name: string; threshold: number }[] = [
 ]
 
 export const MAX_BLOCKED_KEYWORDS = 10000
+export const MAX_JUDGE_RULE_CHARS = 8000
 
 const integer = (min: number, max: number) => z.number().int().min(min).max(max)
 
@@ -85,6 +86,17 @@ export const moderationFormSchema = z
     cyber_policy_exclude_from_ban_count: z.boolean(),
     cyber_session_block_enabled: z.boolean(),
     cyber_session_block_ttl_seconds: integer(1, 2592000),
+    judge_enabled: z.boolean(),
+    judge_mode: z.enum(['observe', 'pre_block']),
+    judge_base_url: z.string().trim().url(),
+    judge_model: z.string().trim().min(1),
+    judge_new_api_keys: z.string(),
+    clear_judge_api_keys: z.boolean(),
+    judge_timeout_ms: integer(1000, 30000),
+    judge_rules: z.string().max(MAX_JUDGE_RULE_CHARS),
+    // Percentage 1-100, stored on the server as 0-1.
+    judge_threshold: integer(1, 100),
+    judge_count_toward_ban: z.boolean(),
   })
   .superRefine((values, context) => {
     if (!values.all_groups && values.groups.length === 0) {
@@ -186,6 +198,16 @@ export function formValuesFromConfig(
     cyber_session_block_enabled: config.cyber_session_block_enabled ?? false,
     cyber_session_block_ttl_seconds:
       config.cyber_session_block_ttl_seconds || 3600,
+    judge_enabled: config.judge_enabled ?? false,
+    judge_mode: config.judge_mode ?? 'observe',
+    judge_base_url: config.judge_base_url ?? '',
+    judge_model: config.judge_model ?? '',
+    judge_new_api_keys: '',
+    clear_judge_api_keys: false,
+    judge_timeout_ms: config.judge_timeout_ms || 8000,
+    judge_rules: config.judge_rules ?? '',
+    judge_threshold: Math.round((config.judge_threshold || 0.8) * 100),
+    judge_count_toward_ban: config.judge_count_toward_ban ?? false,
   }
 }
 
@@ -240,5 +262,16 @@ export function buildConfigUpdate(
       values.cyber_policy_exclude_from_ban_count,
     cyber_session_block_enabled: values.cyber_session_block_enabled,
     cyber_session_block_ttl_seconds: values.cyber_session_block_ttl_seconds,
+    judge_enabled: values.judge_enabled,
+    judge_mode: values.judge_mode,
+    judge_base_url: values.judge_base_url.trim(),
+    judge_model: values.judge_model.trim(),
+    // Entered keys replace the saved ones; none keeps them.
+    judge_api_keys: splitLines(values.judge_new_api_keys),
+    clear_judge_api_keys: values.clear_judge_api_keys,
+    judge_timeout_ms: values.judge_timeout_ms,
+    judge_rules: values.judge_rules.trim(),
+    judge_threshold: values.judge_threshold / 100,
+    judge_count_toward_ban: values.judge_count_toward_ban,
   }
 }

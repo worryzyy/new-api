@@ -58,6 +58,17 @@ const config: ModerationConfigView = {
   cyber_policy_exclude_from_ban_count: false,
   cyber_session_block_enabled: true,
   cyber_session_block_ttl_seconds: 3600,
+  judge_enabled: true,
+  judge_mode: 'observe',
+  judge_base_url: 'https://api.deepseek.com',
+  judge_model: 'deepseek-chat',
+  judge_api_keys: [],
+  judge_timeout_ms: 8000,
+  judge_rules: 'saved rules',
+  judge_threshold: 0.8,
+  judge_count_toward_ban: false,
+  judge_api_key_statuses: [],
+  judge_default_rules: 'default rules',
   api_key_configured: true,
   api_key_count: 1,
   api_key_masks: ['********OMkA'],
@@ -143,6 +154,19 @@ describe('ContentModeration page', () => {
 })
 
 describe('ModerationSettingsDialog', () => {
+  it('restores the default judge rules from the judge tab', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+    await screen.findByRole('dialog', { name: 'Content audit settings' })
+
+    await user.click(screen.getByRole('tab', { name: 'LLM judge' }))
+    const rules = screen.getByRole('textbox', { name: 'Judge rules' })
+    expect(rules).toHaveValue('saved rules')
+    await user.click(screen.getByRole('button', { name: 'Reset to defaults' }))
+
+    expect(rules).toHaveValue('default rules')
+  })
+
   it('opens on the basic tab with the saved key listed', async () => {
     renderDialog()
 
@@ -163,6 +187,7 @@ describe('ModerationSettingsDialog', () => {
       'Hit handling',
       'Risk thresholds',
       'Keyword blocking',
+      'LLM judge',
       'Log retention',
     ]) {
       await user.click(screen.getByRole('tab', { name }))

@@ -60,7 +60,18 @@ export interface ModerationConfig {
   cyber_policy_exclude_from_ban_count: boolean
   cyber_session_block_enabled: boolean
   cyber_session_block_ttl_seconds: number
+  judge_enabled: boolean
+  judge_mode: JudgeMode
+  judge_base_url: string
+  judge_model: string
+  judge_api_keys: string[]
+  judge_timeout_ms: number
+  judge_rules: string
+  judge_threshold: number
+  judge_count_toward_ban: boolean
 }
+
+export type JudgeMode = 'observe' | 'pre_block'
 
 export interface ModerationKeyStatus {
   index: number
@@ -97,12 +108,15 @@ export interface ModerationConfigView extends ModerationConfig {
   api_key_count: number
   api_key_masks: string[]
   api_key_statuses: ModerationKeyStatus[]
+  judge_api_key_statuses: ModerationKeyStatus[]
+  judge_default_rules: string
 }
 
 export interface ModerationConfigUpdate extends ModerationConfig {
   api_keys_mode: 'append' | 'replace'
   delete_api_key_hashes: string[]
   clear_api_keys: boolean
+  clear_judge_api_keys: boolean
 }
 
 export interface ModerationStatus {
@@ -139,6 +153,14 @@ export interface ModerationStatus {
   last_cleanup_deleted_non_hit: number
   cyber_policy_hits: number
   cyber_session_blocked: number
+  judge_enabled: boolean
+  judge_checked: number
+  judge_flagged: number
+  judge_errors: number
+  judge_cache_hits: number
+  judge_avg_latency_ms: number
+  judge_key_count: number
+  judge_key_available_count: number
 }
 
 export type ModerationAction =
@@ -148,6 +170,7 @@ export type ModerationAction =
   | 'hash_block'
   | 'error'
   | 'cyber_policy'
+  | 'judge_block'
 
 export interface ModerationLog {
   id: number
@@ -171,6 +194,9 @@ export interface ModerationLog {
   category_scores: string
   threshold_snapshot: string
   input_excerpt: string
+  /** Unredacted latest user turn; only returned by the detail endpoint. */
+  input_full?: string
+  judge_reason: string
   input_hash: string
   error: string
   upstream_latency_ms: number
@@ -199,6 +225,30 @@ export interface ModerationVerdict {
   highest_score: number
   category_scores?: Record<string, number>
   thresholds?: Record<string, number>
+}
+
+export interface JudgeVerdict {
+  violation: boolean
+  category: string
+  confidence: number
+  reason: string
+}
+
+export interface JudgeTestRequest {
+  api_keys?: string[]
+  base_url?: string
+  model?: string
+  timeout_ms?: number
+  rules?: string
+  threshold?: number
+  prompt: string
+}
+
+export interface JudgeTestResult {
+  verdict?: JudgeVerdict
+  flagged: boolean
+  latency_ms: number
+  error?: string
 }
 
 export interface ModerationKeyTestRequest {
@@ -263,6 +313,20 @@ export function getModerationLogs(
   return unwrap(
     api.get('/api/content_moderation/logs', { params }),
     t('Failed to load content moderation records')
+  )
+}
+
+export function getModerationLog(id: number): Promise<ModerationLog> {
+  return unwrap(
+    api.get(`/api/content_moderation/logs/${id}`),
+    t('Failed to load content moderation records')
+  )
+}
+
+export function testJudge(request: JudgeTestRequest): Promise<JudgeTestResult> {
+  return unwrap(
+    api.post('/api/content_moderation/judge/test', request),
+    t('Moderation test failed')
   )
 }
 

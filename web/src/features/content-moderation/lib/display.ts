@@ -49,6 +49,8 @@ export function moderationResultBadge(
       return { label: t('Hash blocked'), variant: 'danger' }
     case 'cyber_policy':
       return { label: t('Cyber policy'), variant: 'danger' }
+    case 'judge_block':
+      return { label: t('Judge blocked'), variant: 'danger' }
     case 'error':
       return { label: t('Moderation error'), variant: 'warning' }
     default:

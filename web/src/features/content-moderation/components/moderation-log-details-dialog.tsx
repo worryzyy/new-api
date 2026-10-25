@@ -16,9 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
@@ -28,7 +30,7 @@ import {
 } from '@/features/usage-logs/components/dialogs/log-detail-layout'
 import dayjs from '@/lib/dayjs'
 
-import type { ModerationLog } from '../api'
+import { getModerationLog, type ModerationLog } from '../api'
 import {
   formatPercent,
   moderationResultBadge,
@@ -49,7 +51,20 @@ export function ModerationLogDetailsDialog(props: { entry: ModerationLog }) {
   if (entry.source === 'keyword') sourceLabel = t('Keyword')
   if (entry.source === 'hash') sourceLabel = t('Flagged content hash')
   if (entry.source === 'upstream') sourceLabel = t('Upstream response')
+  if (entry.source === 'judge') sourceLabel = t('LLM judge')
   const isCyber = entry.action === 'cyber_policy'
+  // Only flagged records keep the full, unredacted input.
+  const detail = useQuery({
+    queryKey: ['content-moderation', 'log', entry.id],
+    queryFn: () => getModerationLog(entry.id),
+    enabled: open && entry.flagged,
+    staleTime: Infinity,
+  })
+  const fullInput = detail.data?.input_full
+  const excerpt = isCyber
+    ? entry.input_excerpt
+    : entry.error || entry.input_excerpt
+  const inputText = fullInput || excerpt || '—'
 
   return (
     <Dialog
@@ -120,17 +135,32 @@ export function ModerationLogDetailsDialog(props: { entry: ModerationLog }) {
         )}
       </div>
 
+      {entry.judge_reason && (
+        <DetailSection label={t('Judge reason')}>
+          <p className='text-sm break-words'>{entry.judge_reason}</p>
+        </DetailSection>
+      )}
+
       <DetailSection label={t('Input content')}>
         <div className='text-muted-foreground flex flex-wrap items-center gap-2 text-xs'>
           <span className='font-mono'>{entry.endpoint || '—'}</span>
           <span>·</span>
           <span>{entry.model_name || '—'}</span>
           {entry.group_name && <GroupBadge group={entry.group_name} />}
+          <span className='ms-auto'>
+            {fullInput ? t('Full original text') : t('Redacted excerpt')}
+          </span>
+          {fullInput && (
+            <CopyButton
+              value={fullInput}
+              size='icon'
+              className='size-7'
+              tooltip={t('Copy')}
+            />
+          )}
         </div>
-        <pre className='bg-muted mt-2 max-h-60 overflow-y-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap'>
-          {(isCyber
-            ? entry.input_excerpt
-            : entry.error || entry.input_excerpt) || '—'}
+        <pre className='bg-muted mt-2 max-h-96 overflow-y-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap'>
+          {detail.isPending && entry.flagged ? t('Loading...') : inputText}
         </pre>
       </DetailSection>
 

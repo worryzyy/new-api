@@ -103,6 +103,7 @@ export function ModerationLogFilterBar(props: {
           { value: 'hit', label: t('Hit') },
           { value: 'blocked', label: t('Blocked') },
           { value: 'cyber_policy', label: t('Cyber policy') },
+          { value: 'judge', label: t('LLM judge hit') },
           { value: 'pass', label: t('Passed') },
           { value: 'error', label: t('Moderation error') },
         ]}

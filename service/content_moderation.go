@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +38,7 @@ type ModerationVerdict struct {
 	Score          float64            `json:"highest_score"`
 	CategoryScores map[string]float64 `json:"category_scores,omitempty"`
 	Thresholds     map[string]float64 `json:"thresholds,omitempty"`
+	JudgeReason    string             `json:"judge_reason,omitempty"`
 }
 
 // EvaluateOpenAIModeration flags a result when any category score reaches its
@@ -67,9 +69,10 @@ type moderationOutcome struct {
 	sampledOut      bool
 }
 
-// runModeration applies keywords, the flagged-hash pre-check, sampling and the
-// OpenAI endpoint in that order.
-func runModeration(ctx context.Context, config *operation_setting.ContentModerationConfig, input ModerationInput, trackLoad bool) moderationOutcome {
+// runModeration applies keywords, the flagged-hash pre-check, sampling and then
+// the OpenAI endpoint, in parallel with the LLM judge when withJudge is set.
+// An OpenAI hit wins over a judge hit.
+func runModeration(ctx context.Context, config *operation_setting.ContentModerationConfig, input ModerationInput, trackLoad bool, withJudge bool) moderationOutcome {
 	var outcome moderationOutcome
 	if config.KeywordBlockingMode != operation_setting.ContentModerationAPIOnly {
 		if keyword := matchModerationKeyword(config.BlockedKeywords, input.Text); keyword != "" {
@@ -91,19 +94,49 @@ func runModeration(ctx context.Context, config *operation_setting.ContentModerat
 		outcome.sampledOut = true
 		return outcome
 	}
-	if len(config.APIKeys) == 0 {
+	withJudge = withJudge && config.JudgeEnabled
+	if len(config.APIKeys) == 0 && !withJudge {
 		outcome.err = errNoModerationKey
 		return outcome
 	}
-	result, latency, err := moderateWithKeyPool(ctx, config, input, trackLoad)
-	outcome.upstreamLatency = latency
-	if err != nil {
-		outcome.err = err
-		return outcome
+	var judged moderationOutcome
+	var wg sync.WaitGroup
+	if withJudge {
+		wg.Go(func() { judged = runJudgeModeration(ctx, config, input) })
 	}
-	outcome.verdict = EvaluateOpenAIModeration(result, config.Thresholds)
+	if len(config.APIKeys) > 0 {
+		result, latency, err := moderateWithKeyPool(ctx, config, input, trackLoad)
+		outcome.upstreamLatency = latency
+		if err != nil {
+			outcome.err = err
+		} else {
+			outcome.verdict = EvaluateOpenAIModeration(result, config.Thresholds)
+		}
+	}
+	wg.Wait()
 	if outcome.verdict.Flagged {
 		outcome.blockAction = model.ContentModerationActionBlock
+		addModerationHash(outcome.inputHash)
+		return outcome
+	}
+	if !withJudge {
+		return outcome
+	}
+	outcome.upstreamLatency = max(outcome.upstreamLatency, judged.upstreamLatency)
+	if !judged.verdict.Flagged {
+		if outcome.err == nil {
+			outcome.err = judged.err
+		}
+		return outcome
+	}
+	scores := outcome.verdict
+	outcome.verdict = judged.verdict
+	outcome.verdict.CategoryScores = scores.CategoryScores
+	outcome.verdict.Thresholds = scores.Thresholds
+	outcome.blockAction = judged.blockAction
+	outcome.err = nil
+	// While the judge only observes, its hits must not turn into hash blocks.
+	if config.JudgeMode == operation_setting.ContentModerationModePreBlock {
 		addModerationHash(outcome.inputHash)
 	}
 	return outcome
@@ -112,7 +145,7 @@ func runModeration(ctx context.Context, config *operation_setting.ContentModerat
 // CheckModerationInput runs the saved configuration on an input without
 // recording it, for the administrator test panel.
 func CheckModerationInput(ctx context.Context, input ModerationInput) (ModerationVerdict, error) {
-	outcome := runModeration(ctx, operation_setting.GetContentModerationConfig(), input, false)
+	outcome := runModeration(ctx, operation_setting.GetContentModerationConfig(), input, false, false)
 	return outcome.verdict, outcome.err
 }
 
@@ -131,7 +164,10 @@ func matchModerationKeyword(keywords []string, text string) string {
 }
 
 type moderationJob struct {
-	check      bool
+	check bool
+	// judgeOnly asks the LLM judge alone, after a synchronous check that ran
+	// without it because the judge only observes.
+	judgeOnly  bool
 	input      ModerationInput
 	outcome    moderationOutcome
 	allowBlock bool
@@ -216,7 +252,8 @@ func ModerateRelayRequest(c *gin.Context, info *relaycommon.RelayInfo) *types.Ne
 
 	moderationStats.preBlockActive.Add(1)
 	started := time.Now()
-	outcome := runModeration(c.Request.Context(), config, input, true)
+	judgeBlocks := config.JudgeMode == operation_setting.ContentModerationModePreBlock
+	outcome := runModeration(c.Request.Context(), config, input, true, judgeBlocks)
 	moderationStats.preBlockActive.Add(-1)
 	moderationStats.preBlockChecked.Add(1)
 	moderationStats.preBlockLatencyMs.Add(time.Since(started).Milliseconds())
@@ -235,6 +272,14 @@ func ModerateRelayRequest(c *gin.Context, info *relaycommon.RelayInfo) *types.Ne
 		enqueueModerationJob(config, job)
 	}
 	if !outcome.verdict.Flagged {
+		if config.JudgeEnabled && !judgeBlocks && !outcome.sampledOut && outcome.inputHash != "" {
+			judgeJob := *job
+			judgeJob.check = true
+			judgeJob.judgeOnly = true
+			judgeJob.allowBlock = false
+			judgeJob.outcome = moderationOutcome{inputHash: outcome.inputHash}
+			enqueueModerationJob(config, &judgeJob)
+		}
 		return nil
 	}
 
@@ -314,15 +359,23 @@ func processModerationJob(job *moderationJob) {
 	}()
 	config := operation_setting.GetContentModerationConfig()
 	if job.check {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.TimeoutMs*(config.RetryCount+1)+1000)*time.Millisecond)
-		job.outcome = runModeration(ctx, config, job.input, false)
+		timeoutMs := max(config.TimeoutMs, config.JudgeTimeout)*(config.RetryCount+1) + 1000
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+		if job.judgeOnly {
+			inputHash := job.outcome.inputHash
+			job.outcome = runJudgeModeration(ctx, config, job.input)
+			job.outcome.inputHash = inputHash
+		} else {
+			job.outcome = runModeration(ctx, config, job.input, false, true)
+		}
 		cancel()
 		moderationStats.processed.Add(1)
 		if job.outcome.err != nil {
 			moderationStats.asyncErrors.Add(1)
 			common.SysError(common.LogText("content moderation async check failed: %s", job.outcome.err.Error()))
 		}
-		if !moderationShouldRecord(config, job.outcome) {
+		// A judge-only pass follows a check that was already recorded.
+		if !moderationShouldRecord(config, job.outcome) || (job.judgeOnly && !job.outcome.verdict.Flagged) {
 			return
 		}
 	}
@@ -353,6 +406,7 @@ func recordModerationJob(config *operation_setting.ContentModerationConfig, job 
 		Score:             outcome.verdict.Score,
 		InputExcerpt:      moderationExcerpt(job.input),
 		InputHash:         outcome.inputHash,
+		JudgeReason:       outcome.verdict.JudgeReason,
 		UpstreamLatencyMs: int(outcome.upstreamLatency.Milliseconds()),
 	}
 	if job.logOnly {
@@ -377,7 +431,11 @@ func recordModerationJob(config *operation_setting.ContentModerationConfig, job 
 		}
 	}
 
-	if outcome.verdict.Flagged && !job.logOnly && outcome.blockAction != model.ContentModerationActionHashBlock {
+	if outcome.verdict.Flagged {
+		entry.InputFull = moderationFullInput(job.input)
+	}
+	judgeRecordOnly := outcome.verdict.Source == model.ContentModerationSourceJudge && !config.JudgeCountTowardBan
+	if outcome.verdict.Flagged && !job.logOnly && outcome.blockAction != model.ContentModerationActionHashBlock && !judgeRecordOnly {
 		countContentViolation(config, entry)
 	}
 	if err := model.CreateContentModerationLog(entry); err != nil {
@@ -392,7 +450,7 @@ func countContentViolation(config *operation_setting.ContentModerationConfig, en
 		return
 	}
 	since := common.GetTimestamp() - int64(config.ViolationWindowHours)*3600
-	count, err := model.CountUserViolationsSinceLastBan(entry.UserId, since, config.CyberPolicyExcludeFromBanCount)
+	count, err := model.CountUserViolationsSinceLastBan(entry.UserId, since, config.CyberPolicyExcludeFromBanCount, !config.JudgeCountTowardBan)
 	if err != nil {
 		common.SysError(common.LogText("failed to count content violations for user %d: %s", entry.UserId, err.Error()))
 	}
@@ -527,6 +585,15 @@ type ContentModerationStatus struct {
 
 	CyberPolicyHits     int64 `json:"cyber_policy_hits"`
 	CyberSessionBlocked int64 `json:"cyber_session_blocked"`
+
+	JudgeEnabled           bool  `json:"judge_enabled"`
+	JudgeChecked           int64 `json:"judge_checked"`
+	JudgeFlagged           int64 `json:"judge_flagged"`
+	JudgeErrors            int64 `json:"judge_errors"`
+	JudgeCacheHits         int64 `json:"judge_cache_hits"`
+	JudgeAvgLatencyMs      int64 `json:"judge_avg_latency_ms"`
+	JudgeKeyCount          int   `json:"judge_key_count"`
+	JudgeKeyAvailableCount int   `json:"judge_key_available_count"`
 }
 
 // GetContentModerationStatus reports this process's runtime counters; they
@@ -561,6 +628,16 @@ func GetContentModerationStatus() ContentModerationStatus {
 		LastCleanupDeletedNonHit: moderationStats.lastCleanupDeletedNonHit.Load(),
 		CyberPolicyHits:          cyberStats.hits.Load(),
 		CyberSessionBlocked:      cyberStats.sessionBlocked.Load(),
+		JudgeEnabled:             config.JudgeEnabled,
+		JudgeChecked:             judgeStats.checked.Load(),
+		JudgeFlagged:             judgeStats.flagged.Load(),
+		JudgeErrors:              judgeStats.errors.Load(),
+		JudgeCacheHits:           judgeStats.cacheHits.Load(),
+		JudgeKeyCount:            len(config.JudgeAPIKeys),
+		JudgeKeyAvailableCount:   availableModerationKeyCount(config.JudgeAPIKeys),
+	}
+	if status.JudgeChecked > 0 {
+		status.JudgeAvgLatencyMs = judgeStats.latencyMs.Load() / status.JudgeChecked
 	}
 	if status.PreBlockChecked > 0 {
 		status.PreBlockAvgLatencyMs = moderationStats.preBlockLatencyMs.Load() / status.PreBlockChecked
@@ -580,6 +657,10 @@ type ContentModerationConfigView struct {
 	APIKeyCount      int                   `json:"api_key_count"`
 	APIKeyMasks      []string              `json:"api_key_masks"`
 	APIKeyStatuses   []ModerationKeyStatus `json:"api_key_statuses"`
+
+	JudgeAPIKeys        []string              `json:"judge_api_keys"`
+	JudgeAPIKeyStatuses []ModerationKeyStatus `json:"judge_api_key_statuses"`
+	JudgeDefaultRules   string                `json:"judge_default_rules"`
 }
 
 // GetContentModerationConfigView returns the config without plaintext keys.
@@ -596,17 +677,22 @@ func GetContentModerationConfigView() ContentModerationConfigView {
 		APIKeyCount:             len(config.APIKeys),
 		APIKeyMasks:             masks,
 		APIKeyStatuses:          moderationKeyStatuses(config.APIKeys, true),
+		JudgeAPIKeys:            []string{},
+		JudgeAPIKeyStatuses:     moderationKeyStatuses(config.JudgeAPIKeys, true),
+		JudgeDefaultRules:       operation_setting.DefaultContentModerationJudgeRules,
 	}
 }
 
 // ContentModerationConfigUpdate replaces all settings except the keys, which
 // are changed through APIKeysMode, DeleteAPIKeyHashes and ClearAPIKeys so the
-// stored keys never need to be sent back to the browser.
+// stored keys never need to be sent back to the browser. Judge keys are kept
+// unless new ones are sent (which replace them) or ClearJudgeAPIKeys is set.
 type ContentModerationConfigUpdate struct {
 	operation_setting.ContentModerationConfig
 	APIKeysMode        string   `json:"api_keys_mode"`
 	DeleteAPIKeyHashes []string `json:"delete_api_key_hashes"`
 	ClearAPIKeys       bool     `json:"clear_api_keys"`
+	ClearJudgeAPIKeys  bool     `json:"clear_judge_api_keys"`
 }
 
 func UpdateContentModerationConfig(update ContentModerationConfigUpdate) error {
@@ -624,6 +710,12 @@ func UpdateContentModerationConfig(update ContentModerationConfigUpdate) error {
 			}
 		}
 		next.APIKeys = append(kept, next.APIKeys...)
+	}
+	switch {
+	case update.ClearJudgeAPIKeys:
+		next.JudgeAPIKeys = []string{}
+	case len(next.JudgeAPIKeys) == 0:
+		next.JudgeAPIKeys = current.JudgeAPIKeys
 	}
 	if err := next.Validate(); err != nil {
 		return err
