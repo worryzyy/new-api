@@ -7480,7 +7480,7 @@
     "Leave empty to use the default localized message": "留空則使用預設的多語言提示",
     "Disables a user who reaches the violation threshold within the window. Administrators are never disabled, and the count restarts after each ban.": "統計區間內違規次數達到閾值時停用使用者。管理員不會被停用，每次封禁後重新計數。",
     "Ban threshold": "封禁閾值",
-    "Violations that disable the user (1-1000).": "達到該違規次數即停用使用者（1-1000）。",
+    "Distinct violating messages that disable the user (1-1000). Requests, retries and agent steps of the same message count once.": "達到此數量的不同違規訊息即封號（1-1000）。同一則訊息引發的多次請求、重試與智慧體步驟只算一次。",
     "Only violations within this window are counted (1-8760).": "只統計該時間區間內的違規（1-8760）。",
     "A request is a hit when any category score reaches its threshold. Values are percentages.": "任一分類分數達到閾值即判為命中，數值為百分比。",
     "Reset to defaults": "恢復預設",

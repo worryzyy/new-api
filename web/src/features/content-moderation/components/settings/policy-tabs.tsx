@@ -97,7 +97,9 @@ export function HitTab(props: { status?: ModerationStatus }) {
             control={form.control}
             name='ban_threshold'
             label={t('Ban threshold')}
-            description={t('Violations that disable the user (1-1000).')}
+            description={t(
+              'Distinct violating messages that disable the user (1-1000). Requests, retries and agent steps of the same message count once.'
+            )}
           />
           <NumberField
             control={form.control}

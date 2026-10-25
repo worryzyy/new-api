@@ -1,6 +1,10 @@
 package model
 
-import "strings"
+import (
+	"strings"
+
+	"gorm.io/gorm"
+)
 
 const (
 	ContentModerationActionAllow        = "allow"
@@ -82,28 +86,45 @@ func CreateContentModerationLog(log *ContentModerationLog) error {
 	return DB.Create(log).Error
 }
 
-// CountUserViolationsSinceLastBan counts flagged records of a user inside the
-// window that count toward automatic bans. Hash blocks and exempt-user records
-// are excluded, cyber_policy and judge records too when excludeCyber or
-// excludeJudge is set, and counting restarts after the latest automatic ban.
-func CountUserViolationsSinceLastBan(userId int, since int64, excludeCyber bool, excludeJudge bool) (int64, error) {
+// CountUserViolationsSinceLastBan counts the distinct violating messages of a
+// user inside the window that count toward automatic bans, and reports whether
+// inputHash is already one of them. Records of the same message (same input
+// hash) count once however many requests or retries it caused; records without
+// a hash count one each. Hash blocks and exempt-user records are excluded,
+// cyber_policy and judge records too when excludeCyber or excludeJudge is set,
+// and counting restarts after the latest automatic ban.
+func CountUserViolationsSinceLastBan(userId int, since int64, excludeCyber bool, excludeJudge bool, inputHash string) (int64, bool, error) {
 	var lastBan ContentModerationLog
 	if err := DB.Select("id").Where("user_id = ? AND auto_banned = ?", userId, true).
 		Order("id desc").Limit(1).Find(&lastBan).Error; err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	tx := DB.Model(&ContentModerationLog{}).
-		Where("user_id = ? AND flagged = ? AND created_at >= ? AND id > ? AND action <> ? AND (mode IS NULL OR mode <> ?)",
-			userId, true, since, lastBan.Id, ContentModerationActionHashBlock, ContentModerationModeLogOnly)
-	if excludeCyber {
-		tx = tx.Where("action <> ?", ContentModerationActionCyberPolicy)
-	}
-	if excludeJudge {
-		tx = tx.Where("(source IS NULL OR source <> ?)", ContentModerationSourceJudge)
+	counted := func() *gorm.DB {
+		tx := DB.Model(&ContentModerationLog{}).
+			Where("user_id = ? AND flagged = ? AND created_at >= ? AND id > ? AND action <> ? AND (mode IS NULL OR mode <> ?)",
+				userId, true, since, lastBan.Id, ContentModerationActionHashBlock, ContentModerationModeLogOnly)
+		if excludeCyber {
+			tx = tx.Where("action <> ?", ContentModerationActionCyberPolicy)
+		}
+		if excludeJudge {
+			tx = tx.Where("(source IS NULL OR source <> ?)", ContentModerationSourceJudge)
+		}
+		return tx
 	}
 	var count int64
-	err := tx.Count(&count).Error
-	return count, err
+	if err := counted().
+		Select("COUNT(DISTINCT CASE WHEN input_hash <> '' THEN input_hash END) + COUNT(CASE WHEN input_hash IS NULL OR input_hash = '' THEN 1 END)").
+		Scan(&count).Error; err != nil {
+		return 0, false, err
+	}
+	if inputHash == "" {
+		return count, false, nil
+	}
+	var same int64
+	if err := counted().Where("input_hash = ?", inputHash).Count(&same).Error; err != nil {
+		return 0, false, err
+	}
+	return count, same > 0, nil
 }
 
 func GetContentModerationLogs(filter ContentModerationLogFilter, startIdx int, pageSize int) ([]*ContentModerationLog, int64, error) {

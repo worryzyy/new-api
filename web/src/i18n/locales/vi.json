@@ -7480,7 +7480,7 @@
     "Leave empty to use the default localized message": "Để trống để dùng thông báo mặc định theo ngôn ngữ",
     "Disables a user who reaches the violation threshold within the window. Administrators are never disabled, and the count restarts after each ban.": "Vô hiệu hóa người dùng đạt ngưỡng vi phạm trong khoảng thời gian. Quản trị viên không bao giờ bị vô hiệu hóa, và số lần được đếm lại sau mỗi lần cấm.",
     "Ban threshold": "Ngưỡng cấm",
-    "Violations that disable the user (1-1000).": "Số lần vi phạm để vô hiệu hóa người dùng (1-1000).",
+    "Distinct violating messages that disable the user (1-1000). Requests, retries and agent steps of the same message count once.": "Số tin nhắn vi phạm khác nhau để vô hiệu hóa người dùng (1-1000). Các yêu cầu, lần thử lại và bước tác tử của cùng một tin nhắn chỉ tính một lần.",
     "Only violations within this window are counted (1-8760).": "Chỉ tính vi phạm trong khoảng thời gian này (1-8760).",
     "A request is a hit when any category score reaches its threshold. Values are percentages.": "Yêu cầu bị tính là trúng khi điểm bất kỳ danh mục nào đạt ngưỡng. Giá trị tính theo phần trăm.",
     "Reset to defaults": "Khôi phục mặc định",

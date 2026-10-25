@@ -7480,7 +7480,7 @@
     "Leave empty to use the default localized message": "留空则使用默认的多语言提示",
     "Disables a user who reaches the violation threshold within the window. Administrators are never disabled, and the count restarts after each ban.": "统计窗口内违规次数达到阈值时禁用用户。管理员不会被禁用，每次封禁后重新计数。",
     "Ban threshold": "封禁阈值",
-    "Violations that disable the user (1-1000).": "达到该违规次数即禁用用户（1-1000）。",
+    "Distinct violating messages that disable the user (1-1000). Requests, retries and agent steps of the same message count once.": "达到该数量的不同违规消息即封号（1-1000）。同一条消息引发的多次请求、重试和智能体步骤只算一次。",
     "Only violations within this window are counted (1-8760).": "只统计该时间窗口内的违规（1-8760）。",
     "A request is a hit when any category score reaches its threshold. Values are percentages.": "任一分类分数达到阈值即判为命中，数值为百分比。",
     "Reset to defaults": "恢复默认",

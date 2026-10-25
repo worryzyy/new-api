@@ -7480,7 +7480,7 @@
     "Leave empty to use the default localized message": "Leave empty to use the default localized message",
     "Disables a user who reaches the violation threshold within the window. Administrators are never disabled, and the count restarts after each ban.": "Disables a user who reaches the violation threshold within the window. Administrators are never disabled, and the count restarts after each ban.",
     "Ban threshold": "Ban threshold",
-    "Violations that disable the user (1-1000).": "Violations that disable the user (1-1000).",
+    "Distinct violating messages that disable the user (1-1000). Requests, retries and agent steps of the same message count once.": "Distinct violating messages that disable the user (1-1000). Requests, retries and agent steps of the same message count once.",
     "Only violations within this window are counted (1-8760).": "Only violations within this window are counted (1-8760).",
     "A request is a hit when any category score reaches its threshold. Values are percentages.": "A request is a hit when any category score reaches its threshold. Values are percentages.",
     "Reset to defaults": "Reset to defaults",

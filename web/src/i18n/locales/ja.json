@@ -7480,7 +7480,7 @@
     "Leave empty to use the default localized message": "空欄の場合は既定の多言語メッセージを使います",
     "Disables a user who reaches the violation threshold within the window. Administrators are never disabled, and the count restarts after each ban.": "期間内の違反回数がしきい値に達したユーザーを無効化します。管理者は無効化されず、停止のたびに回数はリセットされます。",
     "Ban threshold": "停止のしきい値",
-    "Violations that disable the user (1-1000).": "この回数の違反でユーザーを無効化します（1-1000）。",
+    "Distinct violating messages that disable the user (1-1000). Requests, retries and agent steps of the same message count once.": "この数の異なる違反メッセージでユーザーを無効化します（1-1000）。同じメッセージによる複数のリクエスト、再試行、エージェントのステップは 1 回と数えます。",
     "Only violations within this window are counted (1-8760).": "この期間内の違反のみ数えます（1-8760）。",
     "A request is a hit when any category score reaches its threshold. Values are percentages.": "いずれかのカテゴリのスコアがしきい値に達するとヒットになります。値はパーセントです。",
     "Reset to defaults": "既定値に戻す",

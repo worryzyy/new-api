@@ -125,6 +125,7 @@ func RecordUpstreamCyberPolicy(c *gin.Context, info *relaycommon.RelayInfo, apiE
 		input := ExtractModerationInput(info.Request)
 		entry.InputExcerpt = moderationExcerpt(input)
 		entry.InputFull = moderationFullInput(input)
+		entry.InputHash = moderationInputHash(input)
 	}
 	if logOnly {
 		entry.Mode = model.ContentModerationModeLogOnly

@@ -262,15 +262,29 @@ func TestContentViolationsAutoBanCounting(t *testing.T) {
 		require.NoError(t, model.DB.First(&u, id).Error)
 		return u.Status
 	}
+	messages := 0
 	violation := func(userId int, action string, logOnly bool) {
+		messages++
 		recordModerationJob(&config, &moderationJob{
 			userId:     userId,
 			allowBlock: true,
 			logOnly:    logOnly,
 			input:      ModerationInput{Text: "bad"},
-			outcome:    moderationOutcome{verdict: ModerationVerdict{Flagged: true, Source: moderationSourceKeyword}, blockAction: action},
+			outcome:    moderationOutcome{verdict: ModerationVerdict{Flagged: true, Source: moderationSourceKeyword}, blockAction: action, inputHash: fmt.Sprintf("message-%d", messages)},
 		})
 	}
+	repeat := &model.User{Id: 503, Username: "cm_repeat", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, Group: "default", AffCode: "cm503"}
+	require.NoError(t, model.DB.Create(repeat).Error)
+	for range 3 {
+		recordModerationJob(&config, &moderationJob{
+			userId: repeat.Id, allowBlock: true, input: ModerationInput{Text: "same bad message"},
+			outcome: moderationOutcome{verdict: ModerationVerdict{Flagged: true, Source: moderationSourceOpenAI}, blockAction: model.ContentModerationActionBlock, inputHash: "same-message"},
+		})
+	}
+	assert.Equal(t, common.UserStatusEnabled, statusOf(repeat.Id), "requests of one message count once, below the threshold of 2")
+	var repeatedCounts []int
+	require.NoError(t, model.DB.Model(&model.ContentModerationLog{}).Where("user_id = ?", repeat.Id).Order("id").Pluck("violation_count", &repeatedCounts).Error)
+	assert.Equal(t, []int{1, 1, 1}, repeatedCounts, "every record of the message shows the same violation number")
 
 	violation(user.Id, model.ContentModerationActionHashBlock, false)
 	violation(user.Id, model.ContentModerationActionBlock, true)
@@ -524,7 +538,7 @@ func TestContentModerationDatabaseMatrix(t *testing.T) {
 				excludeCyber, excludeJudge bool
 				expected                   int64
 			}{{false, false, 4}, {true, false, 3}, {false, true, 3}, {true, true, 2}} {
-				count, err := model.CountUserViolationsSinceLastBan(user.Id, now-3600, tc.excludeCyber, tc.excludeJudge)
+				count, _, err := model.CountUserViolationsSinceLastBan(user.Id, now-3600, tc.excludeCyber, tc.excludeJudge, "")
 				require.NoError(t, err)
 				assert.Equal(t, tc.expected, count, "hash blocks, exempt-user records and non-hits never count; cyber=%v judge=%v", tc.excludeCyber, tc.excludeJudge)
 			}
@@ -533,17 +547,33 @@ func TestContentModerationDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, fullInput, detail.InputFull, "the full input is stored unredacted")
 			assert.Equal(t, "targets a third-party platform", detail.JudgeReason)
 			require.NoError(t, model.CreateContentModerationLog(&model.ContentModerationLog{CreatedAt: now - 4, UserId: user.Id, Action: model.ContentModerationActionBlock, Flagged: true, Mode: "pre_block", AutoBanned: true}))
-			count, err := model.CountUserViolationsSinceLastBan(user.Id, now-3600, false, false)
+			count, _, err := model.CountUserViolationsSinceLastBan(user.Id, now-3600, false, false, "")
 			require.NoError(t, err)
 			assert.Equal(t, int64(0), count, "counting restarts after an automatic ban")
+
+			// One message seen by several requests (agent steps, retries) counts once.
+			for _, record := range []model.ContentModerationLog{
+				{CreatedAt: now - 3, UserId: user.Id, Action: model.ContentModerationActionBlock, Flagged: true, Mode: "pre_block", InputHash: "msg-a"},
+				{CreatedAt: now - 3, UserId: user.Id, Action: model.ContentModerationActionBlock, Flagged: true, Mode: "pre_block", InputHash: "msg-a"},
+				{CreatedAt: now - 3, UserId: user.Id, Action: model.ContentModerationActionKeywordBlock, Flagged: true, Mode: "pre_block", InputHash: "msg-b"},
+			} {
+				require.NoError(t, model.CreateContentModerationLog(&record))
+			}
+			count, repeated, err := model.CountUserViolationsSinceLastBan(user.Id, now-3600, false, false, "msg-a")
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), count, "distinct messages are counted, not requests")
+			assert.True(t, repeated)
+			_, repeated, err = model.CountUserViolationsSinceLastBan(user.Id, now-3600, false, false, "msg-c")
+			require.NoError(t, err)
+			assert.False(t, repeated)
 
 			filters := map[string]struct {
 				filter model.ContentModerationLogFilter
 				total  int64
 			}{
-				"hit":      {model.ContentModerationLogFilter{Result: model.ContentModerationResultHit}, 7},
+				"hit":      {model.ContentModerationLogFilter{Result: model.ContentModerationResultHit}, 10},
 				"judge":    {model.ContentModerationLogFilter{Result: model.ContentModerationResultJudge}, 1},
-				"blocked":  {model.ContentModerationLogFilter{Result: model.ContentModerationResultBlocked}, 4},
+				"blocked":  {model.ContentModerationLogFilter{Result: model.ContentModerationResultBlocked}, 7},
 				"cyber":    {model.ContentModerationLogFilter{Result: model.ContentModerationResultCyber}, 1},
 				"pass":     {model.ContentModerationLogFilter{Result: model.ContentModerationResultPass}, 2},
 				"error":    {model.ContentModerationLogFilter{Result: model.ContentModerationResultError}, 1},

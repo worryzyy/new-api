@@ -7480,7 +7480,7 @@
     "Leave empty to use the default localized message": "Оставьте пустым, чтобы использовать стандартное локализованное сообщение",
     "Disables a user who reaches the violation threshold within the window. Administrators are never disabled, and the count restarts after each ban.": "Отключает пользователя, достигшего порога нарушений в окне. Администраторы не отключаются, счётчик обнуляется после каждой блокировки.",
     "Ban threshold": "Порог блокировки",
-    "Violations that disable the user (1-1000).": "Число нарушений, после которого пользователь отключается (1-1000).",
+    "Distinct violating messages that disable the user (1-1000). Requests, retries and agent steps of the same message count once.": "Число разных сообщений-нарушений, после которого пользователь отключается (1-1000). Запросы, повторы и шаги агента одного сообщения считаются один раз.",
     "Only violations within this window are counted (1-8760).": "Учитываются только нарушения в этом окне (1-8760).",
     "A request is a hit when any category score reaches its threshold. Values are percentages.": "Запрос считается совпадением, если оценка любой категории достигает порога. Значения в процентах.",
     "Reset to defaults": "Сбросить по умолчанию",

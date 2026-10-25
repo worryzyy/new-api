@@ -7480,7 +7480,7 @@
     "Leave empty to use the default localized message": "Laissez vide pour utiliser le message localisé par défaut",
     "Disables a user who reaches the violation threshold within the window. Administrators are never disabled, and the count restarts after each ban.": "Désactive un utilisateur qui atteint le seuil de violations dans la fenêtre. Les administrateurs ne sont jamais désactivés et le compteur repart après chaque bannissement.",
     "Ban threshold": "Seuil de bannissement",
-    "Violations that disable the user (1-1000).": "Nombre de violations qui désactive l'utilisateur (1-1000).",
+    "Distinct violating messages that disable the user (1-1000). Requests, retries and agent steps of the same message count once.": "Nombre de messages en infraction distincts qui désactive l'utilisateur (1-1000). Les requêtes, réessais et étapes d'agent d'un même message comptent une seule fois.",
     "Only violations within this window are counted (1-8760).": "Seules les violations dans cette fenêtre sont comptées (1-8760).",
     "A request is a hit when any category score reaches its threshold. Values are percentages.": "Une requête est détectée dès qu'un score de catégorie atteint son seuil. Les valeurs sont en pourcentage.",
     "Reset to defaults": "Rétablir les valeurs par défaut",

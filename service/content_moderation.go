@@ -73,7 +73,9 @@ type moderationOutcome struct {
 // the OpenAI endpoint, in parallel with the LLM judge when withJudge is set.
 // An OpenAI hit wins over a judge hit.
 func runModeration(ctx context.Context, config *operation_setting.ContentModerationConfig, input ModerationInput, trackLoad bool, withJudge bool) moderationOutcome {
-	var outcome moderationOutcome
+	// Every outcome carries the input hash, so repeated hits of one message
+	// count once toward bans.
+	outcome := moderationOutcome{inputHash: moderationInputHash(input)}
 	if config.KeywordBlockingMode != operation_setting.ContentModerationAPIOnly {
 		if keyword := matchModerationKeyword(config.BlockedKeywords, input.Text); keyword != "" {
 			outcome.verdict = ModerationVerdict{Flagged: true, Source: moderationSourceKeyword, MatchedKeyword: keyword}
@@ -84,7 +86,6 @@ func runModeration(ctx context.Context, config *operation_setting.ContentModerat
 			return outcome
 		}
 	}
-	outcome.inputHash = moderationInputHash(input)
 	if config.PreHashCheckEnabled && moderationHashFlagged(outcome.inputHash) {
 		outcome.verdict = ModerationVerdict{Flagged: true, Source: moderationSourceHash}
 		outcome.blockAction = model.ContentModerationActionHashBlock
@@ -272,7 +273,8 @@ func ModerateRelayRequest(c *gin.Context, info *relaycommon.RelayInfo) *types.Ne
 		enqueueModerationJob(config, job)
 	}
 	if !outcome.verdict.Flagged {
-		if config.JudgeEnabled && !judgeBlocks && !outcome.sampledOut && outcome.inputHash != "" {
+		judgeApplies := config.KeywordBlockingMode != operation_setting.ContentModerationKeywordOnly
+		if config.JudgeEnabled && judgeApplies && !judgeBlocks && !outcome.sampledOut {
 			judgeJob := *job
 			judgeJob.check = true
 			judgeJob.judgeOnly = true
@@ -445,16 +447,21 @@ func recordModerationJob(config *operation_setting.ContentModerationConfig, job 
 
 // countContentViolation sets the violation count of a record that counts
 // toward automatic bans and disables the user once the threshold is reached.
+// A message already counted in the window keeps its number and cannot ban.
 func countContentViolation(config *operation_setting.ContentModerationConfig, entry *model.ContentModerationLog) {
 	if entry.UserId <= 0 {
 		return
 	}
 	since := common.GetTimestamp() - int64(config.ViolationWindowHours)*3600
-	count, err := model.CountUserViolationsSinceLastBan(entry.UserId, since, config.CyberPolicyExcludeFromBanCount, !config.JudgeCountTowardBan)
+	count, repeated, err := model.CountUserViolationsSinceLastBan(entry.UserId, since, config.CyberPolicyExcludeFromBanCount, !config.JudgeCountTowardBan, entry.InputHash)
 	if err != nil {
 		common.SysError(common.LogText("failed to count content violations for user %d: %s", entry.UserId, err.Error()))
 	}
-	entry.ViolationCount = int(count) + 1
+	entry.ViolationCount = int(count)
+	if repeated {
+		return
+	}
+	entry.ViolationCount++
 	if config.AutoBanEnabled && entry.ViolationCount >= config.BanThreshold {
 		entry.AutoBanned = disableUserForContentViolations(entry.UserId)
 	}
