@@ -595,12 +595,16 @@ func TestLLMJudgeModeration(t *testing.T) {
 		calls.Add(1)
 		assert.Equal(t, "/v1/chat/completions", r.URL.Path)
 		var body struct {
+			Model    string            `json:"model"`
+			Thinking map[string]string `json:"thinking"`
 			Messages []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"messages"`
 		}
 		require.NoError(t, common.DecodeJson(r.Body, &body))
+		assert.Equal(t, "deepseek-flash", body.Model, "the default judge model")
+		assert.Equal(t, "disabled", body.Thinking["type"], "a verdict is requested without thinking")
 		require.Len(t, body.Messages, 2)
 		assert.Contains(t, body.Messages[0].Content, "my custom rules")
 		user := body.Messages[1].Content

@@ -59,7 +59,7 @@ const savedConfig: ModerationConfigView = {
   judge_enabled: true,
   judge_mode: 'observe',
   judge_base_url: 'https://api.deepseek.com',
-  judge_model: 'deepseek-chat',
+  judge_model: 'deepseek-flash',
   judge_api_keys: [],
   judge_timeout_ms: 8000,
   judge_rules: 'saved rules',

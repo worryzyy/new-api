@@ -170,10 +170,14 @@ func requestJudge(ctx context.Context, config *operation_setting.ContentModerati
 			{"role": "system", "content": judgeSystemPrompt(config.JudgeRules)},
 			{"role": "user", "content": "<" + judgeContentTag + ">\n" + content + "\n</" + judgeContentTag + ">"},
 		},
-		"temperature":     0,
-		"max_tokens":      300,
+		"temperature": 0,
+		// Room for the JSON verdict even if a provider ignores the thinking
+		// switch and spends part of the budget on reasoning.
+		"max_tokens":      1024,
 		"stream":          false,
 		"response_format": map[string]string{"type": "json_object"},
+		// DeepSeek models think by default; a verdict does not need it.
+		"thinking": map[string]string{"type": "disabled"},
 	})
 	if err != nil {
 		return JudgeVerdict{}, 0, 0, err

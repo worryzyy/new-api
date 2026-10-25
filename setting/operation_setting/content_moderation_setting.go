@@ -179,7 +179,7 @@ func DefaultContentModerationConfig() ContentModerationConfig {
 
 		JudgeMode:      ContentModerationModeObserve,
 		JudgeBaseURL:   "https://api.deepseek.com",
-		JudgeModel:     "deepseek-chat",
+		JudgeModel:     "deepseek-flash",
 		JudgeAPIKeys:   []string{},
 		JudgeTimeout:   8000,
 		JudgeRules:     DefaultContentModerationJudgeRules,

@@ -159,7 +159,7 @@ export function JudgeTab(props: {
             <FormItem>
               <FormLabel>{t('Judge model')}</FormLabel>
               <FormControl>
-                <Input placeholder='deepseek-chat' {...field} />
+                <Input placeholder='deepseek-flash' {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
