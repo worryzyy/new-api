@@ -470,7 +470,8 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 			var dialector gorm.Dialector
 			switch tc.dbType {
 			case common.DatabaseTypeSQLite:
-				dialector = sqlite.Open(t.TempDir() + "/rebate.db?_pragma=busy_timeout(5000)")
+				// Same pragmas as the default common.SQLitePath.
+				dialector = sqlite.Open(t.TempDir() + "/rebate.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_txlock=immediate")
 			case common.DatabaseTypeMySQL:
 				dsn := os.Getenv(tc.env)
 				if dsn == "" {
