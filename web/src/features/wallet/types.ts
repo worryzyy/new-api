@@ -156,6 +156,8 @@ export interface TopupInfo {
   payment_compliance_confirmed?: boolean
   /** Current compliance terms version */
   payment_compliance_terms_version?: string
+  /** Share of an invitee's first wallet top-up credited to the inviter (0 = off) */
+  inviter_topup_rebate_percent?: number
 }
 
 /**

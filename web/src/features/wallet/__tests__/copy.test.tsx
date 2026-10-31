@@ -26,6 +26,7 @@ import en from '@/i18n/locales/en.json'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 
+import { AffiliateRewardsCard } from '../components/affiliate-rewards-card'
 import { RechargeFormCard } from '../components/recharge-form-card'
 
 const i18n = createInstance()
@@ -123,5 +124,29 @@ it.each([
       `Pay ${full}`
     )
     expect(screen.getByPlaceholderText('Minimum 1')).toBeVisible()
+  }
+)
+
+it.each([
+  { percent: 10, hint: '邀请好友首次充值，你可获得其充值额的 10% 返利' },
+  { percent: 0, hint: null },
+])(
+  'shows the referral top-up rebate hint only when the rebate is $percent% and enabled',
+  ({ percent, hint }) => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <AffiliateRewardsCard
+          user={null}
+          affiliateLink='https://example.com/register?aff=abc'
+          onTransfer={vi.fn()}
+          topUpRebatePercent={percent}
+        />
+      </I18nextProvider>
+    )
+    if (hint) {
+      expect(screen.getByText(hint)).toBeVisible()
+    } else {
+      expect(screen.queryByText(/返利/)).toBeNull()
+    }
   }
 )

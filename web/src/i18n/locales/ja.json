@@ -4988,6 +4988,7 @@
     "Share of an invitee's first wallet top-up credited to the inviter's referral balance. Set to 0 to disable.": "招待されたユーザーの初回チャージ額のうち、この割合を招待者の紹介残高に還元します。0 で無効。",
     "The referral rebate must be a whole number from 0 to 100": "紹介チャージ還元は 0 から 100 の整数で入力してください",
     "Referral rebate for an invitee's first top-up {{quota}}": "招待ユーザーの初回チャージ還元 {{quota}}",
+    "Get {{percent}}% of each invitee's first top-up as a referral reward": "招待したユーザーの初回チャージ額の {{percent}}% を紹介報酬として獲得できます",
     "Quota given to users who invite others": "他のユーザーを招待したユーザーに付与されるクォータ",
     "Quota given to users who invite others ({{formattedQuota}})": "他のユーザーを招待したユーザーに付与されるクォータ（{{formattedQuota}}）",
     "Quota must be a positive number": "クォータは正の数である必要があります",

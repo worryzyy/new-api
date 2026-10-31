@@ -4988,6 +4988,7 @@
     "Share of an invitee's first wallet top-up credited to the inviter's referral balance. Set to 0 to disable.": "Tỷ lệ của lần nạp đầu tiên của người được mời được cộng vào số dư giới thiệu của người mời. Đặt 0 để tắt.",
     "The referral rebate must be a whole number from 0 to 100": "Hoàn tiền giới thiệu phải là số nguyên từ 0 đến 100",
     "Referral rebate for an invitee's first top-up {{quota}}": "Hoàn tiền giới thiệu cho lần nạp đầu của người được mời {{quota}}",
+    "Get {{percent}}% of each invitee's first top-up as a referral reward": "Nhận {{percent}}% lần nạp tiền đầu tiên của mỗi người được mời làm phần thưởng giới thiệu",
     "Quota given to users who invite others": "Limit for users inviting others",
     "Quota given to users who invite others ({{formattedQuota}})": "Hạn mức cấp cho người dùng mời người khác ({{formattedQuota}})",
     "Quota must be a positive number": "Hạn mức phải là một số dương",

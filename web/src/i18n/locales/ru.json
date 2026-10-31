@@ -4988,6 +4988,7 @@
     "Share of an invitee's first wallet top-up credited to the inviter's referral balance. Set to 0 to disable.": "Доля первого пополнения приглашённого, начисляемая на реферальный баланс пригласившего. 0 — отключить.",
     "The referral rebate must be a whole number from 0 to 100": "Реферальный бонус должен быть целым числом от 0 до 100",
     "Referral rebate for an invitee's first top-up {{quota}}": "Реферальный бонус за первое пополнение приглашённого {{quota}}",
+    "Get {{percent}}% of each invitee's first top-up as a referral reward": "Получайте {{percent}}% от первого пополнения каждого приглашённого в качестве реферального вознаграждения",
     "Quota given to users who invite others": "Квота, предоставляемая пользователям, которые приглашают других",
     "Quota given to users who invite others ({{formattedQuota}})": "Квота, предоставляемая пользователям, которые приглашают других ({{formattedQuota}})",
     "Quota must be a positive number": "Квота должна быть положительным числом",
