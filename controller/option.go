@@ -200,7 +200,14 @@ func UpdateOption(c *gin.Context) {
 		option.Value = fmt.Sprintf("%v", option.Value)
 	}
 	switch option.Key {
-	case "QuotaForInviter", "QuotaForInvitee":
+	case "QuotaForInviter", "QuotaForInvitee", "InviterTopUpRebatePercent":
+		if option.Key == "InviterTopUpRebatePercent" {
+			percent, err := strconv.Atoi(option.Value.(string))
+			if err != nil || percent < 0 || percent > 100 {
+				common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("The referral rebate must be a whole number from 0 to 100"))
+				return
+			}
+		}
 		if isPositiveOptionValue(option.Value.(string)) && !operation_setting.IsPaymentComplianceConfirmed() {
 			common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
 			return

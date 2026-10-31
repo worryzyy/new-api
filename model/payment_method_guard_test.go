@@ -1,12 +1,23 @@
 package model
 
 import (
+	"math"
+	"net"
+	"net/url"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/glebarez/sqlite"
+	sqlmysql "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func insertUserForPaymentGuardTest(t *testing.T, id int, quota int) *User {
@@ -350,6 +361,199 @@ func TestRechargeEpayEnforcesFinalWalletQuotaLimit(t *testing.T) {
 			}
 			assert.Equal(t, tc.wantQuota, getUserQuotaForPaymentGuardTest(t, user.Id))
 			assert.Equal(t, tc.wantStatus, getTopUpStatusForPaymentGuardTest(t, order.TradeNo))
+		})
+	}
+}
+
+func TestTopUpGrantsInviterRebateOnInviteeFirstWalletTopUpOnly(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	oldPercent := common.InviterTopUpRebatePercent
+	paymentSetting := operation_setting.GetPaymentSetting()
+	oldConfirmed, oldTermsVersion := paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = oldQuotaPerUnit
+		common.InviterTopUpRebatePercent = oldPercent
+		paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = oldConfirmed, oldTermsVersion
+	})
+
+	const inviterId, inviteeId = 601, 602
+	testCases := []struct {
+		name              string
+		percent           int
+		complianceOff     bool
+		noInviter         bool
+		priorWalletTopUp  bool
+		priorSubscription bool
+		inviterAffQuota   int
+		manualCompletion  bool
+		wantRebate        int
+	}{
+		{name: "first top-up rebates the inviter", percent: 10, wantRebate: 100000},
+		{name: "administrator completion rebates too", percent: 10, manualCompletion: true, wantRebate: 100000},
+		{name: "earlier subscription purchase still allows the rebate", percent: 10, priorSubscription: true, wantRebate: 100000},
+		{name: "earlier wallet top-up means no rebate", percent: 10, priorWalletTopUp: true},
+		{name: "invitee without inviter", percent: 10, noInviter: true},
+		{name: "rebate disabled", percent: 0},
+		{name: "compliance not confirmed", percent: 10, complianceOff: true},
+		{name: "full referral balance drops the rebate", percent: 10, inviterAffQuota: math.MaxInt32 - 99999},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			truncateTables(t)
+			common.InviterTopUpRebatePercent = tc.percent
+			paymentSetting.ComplianceConfirmed = !tc.complianceOff
+			paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+
+			require.NoError(t, DB.Create(&User{Id: inviterId, Username: "rebate_inviter", AffCode: "rebate-inviter", Status: common.UserStatusEnabled, AffQuota: tc.inviterAffQuota}).Error)
+			invitee := &User{Id: inviteeId, Username: "rebate_invitee", AffCode: "rebate-invitee", Status: common.UserStatusEnabled, InviterId: inviterId}
+			if tc.noInviter {
+				invitee.InviterId = 0
+			}
+			require.NoError(t, DB.Create(invitee).Error)
+			if tc.priorWalletTopUp {
+				createEpayTestOrder(t, inviteeId, "REBATEPRIOR", PaymentProviderEpay, common.TopUpStatusSuccess)
+			}
+			if tc.priorSubscription {
+				require.NoError(t, DB.Create(&TopUp{UserId: inviteeId, Money: 9.99, TradeNo: "REBATESUB", Status: common.TopUpStatusSuccess}).Error)
+			}
+
+			// Each order credits 2 units = 1,000,000 quota; a rebate is 10% of it.
+			order := createEpayTestOrder(t, inviteeId, "REBATEFIRST", PaymentProviderEpay, common.TopUpStatusPending)
+			if tc.manualCompletion {
+				require.NoError(t, ManualCompleteTopUp(order.TradeNo, "127.0.0.1"))
+			} else {
+				_, err := RechargeEpay(order.TradeNo, "alipay", "127.0.0.1")
+				require.NoError(t, err)
+			}
+			second := createEpayTestOrder(t, inviteeId, "REBATESECOND", PaymentProviderEpay, common.TopUpStatusPending)
+			_, err := RechargeEpay(second.TradeNo, "alipay", "127.0.0.1")
+			require.NoError(t, err)
+
+			var inviter User
+			require.NoError(t, DB.Select("aff_quota", "aff_history").Where("id = ?", inviterId).First(&inviter).Error)
+			assert.Equal(t, tc.inviterAffQuota+tc.wantRebate, inviter.AffQuota)
+			assert.Equal(t, tc.wantRebate, inviter.AffHistoryQuota)
+			assert.Equal(t, 2*1000000, getUserQuotaForPaymentGuardTest(t, inviteeId), "the invitee's own top-ups are unaffected")
+
+			var rebates []InviteRebate
+			require.NoError(t, DB.Find(&rebates).Error)
+			if tc.wantRebate == 0 {
+				assert.Empty(t, rebates)
+				return
+			}
+			require.Len(t, rebates, 1)
+			assert.Equal(t, InviteRebate{Id: rebates[0].Id, InviterId: inviterId, InviteeId: inviteeId, TradeNo: "REBATEFIRST",
+				TopUpQuota: 1000000, RebatePercent: 10, RebateQuota: tc.wantRebate, CreatedAt: rebates[0].CreatedAt}, rebates[0])
+		})
+	}
+}
+
+// TestInviteRebateDatabaseMatrix runs the rebate on real databases: the schema
+// migrates repeatedly, and two first top-ups of one invitee completing at the
+// same time both succeed while the inviter is rebated once. MySQL and
+// PostgreSQL run when INVITE_REBATE_MYSQL_DSN / INVITE_REBATE_POSTGRES_DSN
+// point at a loopback instance.
+func TestInviteRebateDatabaseMatrix(t *testing.T) {
+	cases := []struct {
+		name   string
+		env    string
+		dbType common.DatabaseType
+	}{
+		{"sqlite", "", common.DatabaseTypeSQLite},
+		{"mysql", "INVITE_REBATE_MYSQL_DSN", common.DatabaseTypeMySQL},
+		{"postgres", "INVITE_REBATE_POSTGRES_DSN", common.DatabaseTypePostgreSQL},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var dialector gorm.Dialector
+			switch tc.dbType {
+			case common.DatabaseTypeSQLite:
+				dialector = sqlite.Open(t.TempDir() + "/rebate.db?_pragma=busy_timeout(5000)")
+			case common.DatabaseTypeMySQL:
+				dsn := os.Getenv(tc.env)
+				if dsn == "" {
+					t.Skip(tc.env + " is not configured")
+				}
+				config, err := sqlmysql.ParseDSN(dsn)
+				require.NoError(t, err)
+				host, _, err := net.SplitHostPort(config.Addr)
+				require.NoError(t, err)
+				require.True(t, net.ParseIP(host).IsLoopback(), "database tests only permit loopback instances")
+				dialector = mysql.Open(dsn)
+			default:
+				dsn := os.Getenv(tc.env)
+				if dsn == "" {
+					t.Skip(tc.env + " is not configured")
+				}
+				parsed, err := url.Parse(dsn)
+				require.NoError(t, err)
+				require.True(t, net.ParseIP(parsed.Hostname()).IsLoopback(), "database tests only permit loopback instances")
+				dialector = postgres.Open(dsn)
+			}
+			db, err := gorm.Open(dialector, &gorm.Config{})
+			require.NoError(t, err)
+
+			originalDB, originalLogDB := DB, LOG_DB
+			oldQuotaPerUnit, oldPercent := common.QuotaPerUnit, common.InviterTopUpRebatePercent
+			paymentSetting := operation_setting.GetPaymentSetting()
+			oldConfirmed, oldTermsVersion := paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion
+			DB, LOG_DB = db, db
+			common.SetDatabaseTypes(tc.dbType, tc.dbType)
+			initCol()
+			common.QuotaPerUnit = 500000
+			common.InviterTopUpRebatePercent = 10
+			paymentSetting.ComplianceConfirmed = true
+			paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+			t.Cleanup(func() {
+				DB, LOG_DB = originalDB, originalLogDB
+				common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+				initCol()
+				common.QuotaPerUnit, common.InviterTopUpRebatePercent = oldQuotaPerUnit, oldPercent
+				paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = oldConfirmed, oldTermsVersion
+				if sqlDB, err := db.DB(); err == nil {
+					_ = sqlDB.Close()
+				}
+			})
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&User{}, &Log{}, &TopUp{}, &InviteRebate{}))
+			}
+			require.True(t, db.Migrator().HasIndex(&InviteRebate{}, "InviteeId"), "invitee_id must stay unique")
+			for _, table := range []string{"invite_rebates", "top_ups", "logs", "users"} {
+				require.NoError(t, db.Exec("DELETE FROM "+table).Error)
+			}
+
+			inviter := &User{Username: "rebate_mx_inviter", AffCode: "rebate-mx-inviter", Status: common.UserStatusEnabled, Group: "default"}
+			require.NoError(t, db.Create(inviter).Error)
+			invitee := &User{Username: "rebate_mx_invitee", AffCode: "rebate-mx-invitee", Status: common.UserStatusEnabled, Group: "default", InviterId: inviter.Id}
+			require.NoError(t, db.Create(invitee).Error)
+			first := createEpayTestOrder(t, invitee.Id, "REBATEMXA", PaymentProviderEpay, common.TopUpStatusPending)
+			second := createEpayTestOrder(t, invitee.Id, "REBATEMXB", PaymentProviderEpay, common.TopUpStatusPending)
+
+			var wg sync.WaitGroup
+			errs := make([]error, 2)
+			for i, tradeNo := range []string{first.TradeNo, second.TradeNo} {
+				wg.Go(func() { _, errs[i] = RechargeEpay(tradeNo, "alipay", "127.0.0.1") })
+			}
+			wg.Wait()
+			require.NoError(t, errs[0])
+			require.NoError(t, errs[1])
+
+			assert.Equal(t, 2*1000000, getUserQuotaForPaymentGuardTest(t, invitee.Id))
+			var reloaded User
+			require.NoError(t, db.Select("aff_quota", "aff_history").Where("id = ?", inviter.Id).First(&reloaded).Error)
+			assert.Equal(t, 100000, reloaded.AffQuota)
+			assert.Equal(t, 100000, reloaded.AffHistoryQuota)
+			var rebates int64
+			require.NoError(t, db.Model(&InviteRebate{}).Where("invitee_id = ?", invitee.Id).Count(&rebates).Error)
+			assert.Equal(t, int64(1), rebates)
+
+			third := createEpayTestOrder(t, invitee.Id, "REBATEMXC", PaymentProviderEpay, common.TopUpStatusPending)
+			_, err = RechargeEpay(third.TradeNo, "alipay", "127.0.0.1")
+			require.NoError(t, err)
+			require.NoError(t, db.Select("aff_quota").Where("id = ?", inviter.Id).First(&reloaded).Error)
+			assert.Equal(t, 100000, reloaded.AffQuota, "later top-ups are not rebated")
 		})
 	}
 }

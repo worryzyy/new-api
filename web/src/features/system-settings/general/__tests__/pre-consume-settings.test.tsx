@@ -44,6 +44,7 @@ function Fixture() {
             QuotaForNewUser: 0,
             QuotaForInviter: 0,
             QuotaForInvitee: 0,
+            InviterTopUpRebatePercent: 0,
             TopUpLink: '',
             quota_setting: {
               enable_free_model_pre_consume: true,
@@ -142,6 +143,38 @@ test.each(['', '-1'])(
     fireEvent.change(input, { target: { value } })
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))
+    expect(api.put).not.toHaveBeenCalled()
+  }
+)
+
+test('referral rebate of 10 percent saves as a whole number', async () => {
+  await renderSettings()
+  const input = screen.getByRole('spinbutton', { name: 'Referral Rebate (%)' })
+  fireEvent.change(input, { target: { value: '10' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'InviterTopUpRebatePercent',
+      value: 10,
+    })
+  )
+})
+
+test.each(['101', '-1', '2.5'])(
+  'referral rebate "%s" outside whole 0-100 shows a field error and prevents saving',
+  async (value) => {
+    await renderSettings()
+    const input = screen.getByRole('spinbutton', {
+      name: 'Referral Rebate (%)',
+    })
+    fireEvent.change(input, { target: { value } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))
+    expect(
+      screen.getByText(
+        'The referral rebate must be a whole number from 0 to 100'
+      )
+    ).toBeInTheDocument()
     expect(api.put).not.toHaveBeenCalled()
   }
 )

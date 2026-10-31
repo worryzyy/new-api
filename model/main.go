@@ -377,6 +377,7 @@ func migrateDB() error {
 		&AuthzRole{},
 		&UserAccessToken{},
 		&ContentModerationLog{},
+		&InviteRebate{},
 	)
 	if err != nil {
 		return err

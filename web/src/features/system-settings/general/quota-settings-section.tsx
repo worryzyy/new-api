@@ -51,10 +51,18 @@ import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
+const rebatePercentError = () =>
+  i18next.t('The referral rebate must be a whole number from 0 to 100')
+
 const quotaSchema = z.object({
   QuotaForNewUser: z.coerce.number().min(0),
   QuotaForInviter: z.coerce.number().min(0),
   QuotaForInvitee: z.coerce.number().min(0),
+  InviterTopUpRebatePercent: z.coerce
+    .number({ error: () => i18next.t('Please enter a valid number') })
+    .int({ error: rebatePercentError })
+    .min(0, { error: rebatePercentError })
+    .max(100, { error: rebatePercentError }),
   TopUpLink: z.string(),
   quota_setting: z.object({
     enable_free_model_pre_consume: z.boolean(),
@@ -273,6 +281,35 @@ export function QuotaSettingsSection({
                     {t('Quota given to invited users ({{formattedQuota}})', {
                       formattedQuota: formatQuotaInputValue(field.value),
                     })}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='InviterTopUpRebatePercent'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Referral Rebate (%)')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      "Share of an invitee's first wallet top-up credited to the inviter's referral balance. Set to 0 to disable."
+                    )}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -130,6 +130,10 @@ var TelegramBotName = ""
 var QuotaForNewUser = 0
 var QuotaForInviter = 0
 var QuotaForInvitee = 0
+
+// InviterTopUpRebatePercent is the share (0-100) of an invitee's first wallet
+// top-up credited to the inviter's referral balance; 0 disables the rebate.
+var InviterTopUpRebatePercent = 0
 var ChannelDisableThreshold = 5.0
 var AutomaticDisableChannelEnabled = false
 var AutomaticEnableChannelEnabled = false
