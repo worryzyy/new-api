@@ -356,12 +356,6 @@ export type BillingSettings = {
   'checkin_setting.enabled': boolean
   'checkin_setting.min_quota': number
   'checkin_setting.max_quota': number
-  'topup_bonus_setting.enabled': boolean
-  'topup_bonus_setting.title': string
-  'topup_bonus_setting.description': string
-  'topup_bonus_setting.start_time': number
-  'topup_bonus_setting.end_time': number
-  'topup_bonus_setting.tiers': string
 }
 
 export type OperationsSettings = {

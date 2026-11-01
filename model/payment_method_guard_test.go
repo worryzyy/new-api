@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -468,8 +469,6 @@ func TestTopUpGrantsInviterRebateOnInviteeFirstWalletTopUpOnly(t *testing.T) {
 
 func TestTopUpBonusGrantsTheHighestMatchingTierOncePerOrder(t *testing.T) {
 	oldQuotaPerUnit, oldPercent := common.QuotaPerUnit, common.InviterTopUpRebatePercent
-	bonusSetting := operation_setting.GetTopUpBonusSetting()
-	oldBonusSetting := *bonusSetting
 	paymentSetting := operation_setting.GetPaymentSetting()
 	oldConfirmed, oldTermsVersion := paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion
 	common.QuotaPerUnit = 500000
@@ -477,21 +476,21 @@ func TestTopUpBonusGrantsTheHighestMatchingTierOncePerOrder(t *testing.T) {
 	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
 	t.Cleanup(func() {
 		common.QuotaPerUnit, common.InviterTopUpRebatePercent = oldQuotaPerUnit, oldPercent
-		*bonusSetting = oldBonusSetting
 		paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = oldConfirmed, oldTermsVersion
 	})
 
 	const start, end = int64(1_800_000_000), int64(1_800_086_400)
-	tiers := []operation_setting.TopUpBonusTier{
-		{MinAmount: 500, Type: operation_setting.TopUpBonusTypePercent, Value: 8, MaxBonus: 50},
-		{MinAmount: 100, Type: operation_setting.TopUpBonusTypeFixed, Value: 5},
-		{MinAmount: 1000, Type: operation_setting.TopUpBonusTypePercent, Value: 10},
+	tiers := []TopUpBonusTier{
+		{MinAmount: 500, Type: TopUpBonusTypePercent, Value: 8, MaxBonus: 50},
+		{MinAmount: 100, Type: TopUpBonusTypeFixed, Value: 5},
+		{MinAmount: 1000, Type: TopUpBonusTypePercent, Value: 10},
 	}
 	testCases := []struct {
 		name        string
 		amount      int64
 		createdAt   int64
-		disabled    bool
+		campaign    Campaign
+		newer       bool // a second campaign is published at start+100 with a 1-unit bonus
 		walletQuota int
 		wantBonus   int64 // in top-up units
 	}{
@@ -501,15 +500,38 @@ func TestTopUpBonusGrantsTheHighestMatchingTierOncePerOrder(t *testing.T) {
 		{name: "percent tier", amount: 600, createdAt: start, wantBonus: 48},
 		{name: "percent tier capped", amount: 800, createdAt: start, wantBonus: 50},
 		{name: "highest tier wins", amount: 1000, createdAt: end - 1, wantBonus: 100},
-		{name: "order created before the campaign", amount: 600, createdAt: start - 1},
-		{name: "order created after the campaign", amount: 600, createdAt: end},
-		{name: "campaign switched off", amount: 600, createdAt: start, disabled: true},
+		{name: "order created before the start time", amount: 600, createdAt: start - 1},
+		{name: "order created after the end time", amount: 600, createdAt: end},
+		{name: "open start counts from publication", amount: 600, createdAt: start - 1,
+			campaign: Campaign{Status: CampaignStatusPublished, PublishedAt: start, EndTime: end}},
+		{name: "draft campaign grants nothing", amount: 600, createdAt: start,
+			campaign: Campaign{Status: CampaignStatusDraft, StartTime: start, EndTime: end}},
+		{name: "order created after the campaign was ended", amount: 600, createdAt: start + 10,
+			campaign: Campaign{Status: CampaignStatusEnded, PublishedAt: start - 3600, EndedAt: start + 10, StartTime: start, EndTime: end}},
+		{name: "order created before the campaign was ended", amount: 600, createdAt: start + 9, wantBonus: 48,
+			campaign: Campaign{Status: CampaignStatusEnded, PublishedAt: start - 3600, EndedAt: start + 10, StartTime: start, EndTime: end}},
+		{name: "a newer campaign takes over", amount: 600, createdAt: start + 200, newer: true, wantBonus: 1},
 		{name: "bonus dropped when the wallet would overflow", amount: 600, createdAt: start, walletQuota: common.MaxWalletQuota - 600*500000},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			truncateTables(t)
-			*bonusSetting = operation_setting.TopUpBonusSetting{Enabled: !tc.disabled, StartTime: start, EndTime: end, Tiers: tiers}
+			campaign := tc.campaign
+			if campaign.Status == "" {
+				campaign = Campaign{Status: CampaignStatusPublished, PublishedAt: start - 3600, StartTime: start, EndTime: end}
+			}
+			campaign.Title = "bonus"
+			require.NoError(t, ValidateCampaign(&campaign, tiers))
+			require.NoError(t, DB.Create(&campaign).Error)
+			wantCampaignId := campaign.Id
+			if tc.newer {
+				require.NoError(t, DB.Model(&Campaign{}).Where("id = ?", campaign.Id).
+					Updates(map[string]any{"status": CampaignStatusEnded, "ended_at": start + 100}).Error)
+				newer := Campaign{Title: "newer", Status: CampaignStatusPublished, PublishedAt: start + 100}
+				require.NoError(t, ValidateCampaign(&newer, []TopUpBonusTier{{MinAmount: 1, Type: TopUpBonusTypeFixed, Value: 1}}))
+				require.NoError(t, DB.Create(&newer).Error)
+				wantCampaignId = newer.Id
+			}
 			common.InviterTopUpRebatePercent = 10
 			require.NoError(t, DB.Create(&User{Id: 611, Username: "bonus_inviter", AffCode: "bonus-inviter", Status: common.UserStatusEnabled}).Error)
 			require.NoError(t, DB.Create(&User{Id: 612, Username: "bonus_payer", AffCode: "bonus-payer", Status: common.UserStatusEnabled, InviterId: 611, Quota: tc.walletQuota}).Error)
@@ -533,6 +555,7 @@ func TestTopUpBonusGrantsTheHighestMatchingTierOncePerOrder(t *testing.T) {
 				require.Len(t, bonuses, 1)
 				assert.Equal(t, wantBonusQuota, bonuses[0].BonusQuota)
 				assert.Equal(t, int(tc.amount*500000), bonuses[0].TopUpQuota)
+				assert.Equal(t, wantCampaignId, bonuses[0].CampaignId)
 			}
 			var inviter User
 			require.NoError(t, DB.Select("aff_quota").Where("id = ?", 611).First(&inviter).Error)
@@ -541,31 +564,94 @@ func TestTopUpBonusGrantsTheHighestMatchingTierOncePerOrder(t *testing.T) {
 	}
 }
 
-func TestValidateTopUpBonusTiers(t *testing.T) {
-	for raw, valid := range map[string]bool{
-		`[]`: true,
-		`[{"min_amount":100,"type":"fixed","value":5},{"min_amount":500,"type":"percent","value":8,"max_bonus":50}]`: true,
-		`{"min_amount":100}`:                                                                          false,
-		`[{"min_amount":0,"type":"fixed","value":5}]`:                                                 false,
-		`[{"min_amount":100,"type":"fixed","value":0}]`:                                               false,
-		`[{"min_amount":100,"type":"percent","value":101}]`:                                           false,
-		`[{"min_amount":100,"type":"percent","value":5,"max_bonus":-1}]`:                              false,
-		`[{"min_amount":100,"type":"bogus","value":5}]`:                                               false,
-		`[{"min_amount":100,"type":"fixed","value":5},{"min_amount":100,"type":"percent","value":5}]`: false,
-	} {
-		err := operation_setting.ValidateTopUpBonusTiers(raw)
-		if valid {
-			assert.NoError(t, err, raw)
-		} else {
-			assert.Error(t, err, raw)
-		}
+func TestValidateCampaign(t *testing.T) {
+	valid := Campaign{Title: "Double 11", StartTime: 100, EndTime: 200}
+	testCases := []struct {
+		name     string
+		campaign Campaign
+		tiers    []TopUpBonusTier
+		wantErr  bool
+	}{
+		{name: "page without tiers", campaign: valid},
+		{name: "fixed and percent tiers", campaign: valid, tiers: []TopUpBonusTier{
+			{MinAmount: 100, Type: TopUpBonusTypeFixed, Value: 5}, {MinAmount: 500, Type: TopUpBonusTypePercent, Value: 8, MaxBonus: 50}}},
+		{name: "missing title", campaign: Campaign{}, wantErr: true},
+		{name: "end before start", campaign: Campaign{Title: "x", StartTime: 200, EndTime: 200}, wantErr: true},
+		{name: "page too large", campaign: Campaign{Title: "x", Content: LongText(strings.Repeat("a", MaxCampaignContentBytes+1))}, wantErr: true},
+		{name: "zero minimum", campaign: valid, tiers: []TopUpBonusTier{{MinAmount: 0, Type: TopUpBonusTypeFixed, Value: 5}}, wantErr: true},
+		{name: "zero bonus", campaign: valid, tiers: []TopUpBonusTier{{MinAmount: 100, Type: TopUpBonusTypeFixed}}, wantErr: true},
+		{name: "percent above 100", campaign: valid, tiers: []TopUpBonusTier{{MinAmount: 100, Type: TopUpBonusTypePercent, Value: 101}}, wantErr: true},
+		{name: "negative cap", campaign: valid, tiers: []TopUpBonusTier{{MinAmount: 100, Type: TopUpBonusTypePercent, Value: 5, MaxBonus: -1}}, wantErr: true},
+		{name: "unknown type", campaign: valid, tiers: []TopUpBonusTier{{MinAmount: 100, Type: "bogus", Value: 5}}, wantErr: true},
+		{name: "duplicate minimum", campaign: valid, tiers: []TopUpBonusTier{
+			{MinAmount: 100, Type: TopUpBonusTypeFixed, Value: 5}, {MinAmount: 100, Type: TopUpBonusTypePercent, Value: 5}}, wantErr: true},
 	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			campaign := tc.campaign
+			err := ValidateCampaign(&campaign, tc.tiers)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, campaign.Tiers(), len(tc.tiers))
+		})
+	}
+}
+
+// checkCampaignLifecycle publishes, replaces, ends and deletes campaigns and
+// reads back the bonus statistics, against whatever database DB points at.
+func checkCampaignLifecycle(t *testing.T, bonusCampaignId int, wantCount, wantQuota int64) {
+	t.Helper()
+	invalidateCurrentCampaign()
+	second := &Campaign{Title: "second"}
+	require.NoError(t, ValidateCampaign(second, nil))
+	require.NoError(t, CreateCampaign(second))
+	assert.Equal(t, CampaignStatusDraft, second.Status)
+
+	require.NoError(t, PublishCampaign(second.Id))
+	require.NoError(t, PublishCampaign(second.Id), "publishing again is a no-op")
+	first, err := GetCampaignById(bonusCampaignId)
+	require.NoError(t, err)
+	assert.Equal(t, CampaignStatusEnded, first.Status, "publishing a campaign ends the previous one")
+	assert.Positive(t, first.EndedAt)
+	current, err := GetCurrentCampaign()
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	assert.Equal(t, second.Id, current.Id)
+
+	assert.Error(t, DeleteCampaign(second.Id), "a published campaign cannot be deleted")
+	require.NoError(t, EndCampaign(second.Id))
+	assert.Error(t, EndCampaign(second.Id), "only a published campaign can be ended")
+	current, err = GetCurrentCampaign()
+	require.NoError(t, err)
+	assert.Nil(t, current)
+	require.NoError(t, DeleteCampaign(second.Id))
+	_, err = GetCampaignById(second.Id)
+	assert.ErrorIs(t, err, ErrCampaignNotFound)
+
+	stats, err := GetCampaignBonusStats([]int{bonusCampaignId, second.Id})
+	require.NoError(t, err)
+	assert.Equal(t, CampaignBonusStat{CampaignId: bonusCampaignId, Count: wantCount, Quota: wantQuota}, stats[bonusCampaignId])
+	assert.Zero(t, stats[second.Id].Count)
+}
+
+func TestCampaignLifecycle(t *testing.T) {
+	truncateTables(t)
+	t.Cleanup(invalidateCurrentCampaign)
+	first := Campaign{Title: "first", Status: CampaignStatusPublished, PublishedAt: 1}
+	require.NoError(t, ValidateCampaign(&first, nil))
+	require.NoError(t, DB.Create(&first).Error)
+	require.NoError(t, DB.Create(&TopUpBonus{UserId: 1, CampaignId: first.Id, TradeNo: "LIFECYCLEA", BonusQuota: 300}).Error)
+	require.NoError(t, DB.Create(&TopUpBonus{UserId: 1, CampaignId: first.Id, TradeNo: "LIFECYCLEB", BonusQuota: 200}).Error)
+	checkCampaignLifecycle(t, first.Id, 2, 500)
 }
 
 // TestTopUpRewardsDatabaseMatrix runs the top-up rewards on real databases: the
 // schema migrates repeatedly, and two first top-ups of one invitee completing
 // at the same time both succeed and each earn the campaign bonus, while the
-// inviter is rebated once. MySQL and PostgreSQL run when
+// inviter is rebated once; campaigns then publish, end and delete. MySQL and PostgreSQL run when
 // INVITE_REBATE_MYSQL_DSN / INVITE_REBATE_POSTGRES_DSN point at a loopback
 // instance.
 func TestTopUpRewardsDatabaseMatrix(t *testing.T) {
@@ -620,13 +706,8 @@ func TestTopUpRewardsDatabaseMatrix(t *testing.T) {
 			common.InviterTopUpRebatePercent = 10
 			paymentSetting.ComplianceConfirmed = true
 			paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
-			bonusSetting := operation_setting.GetTopUpBonusSetting()
-			oldBonusSetting := *bonusSetting
-			*bonusSetting = operation_setting.TopUpBonusSetting{Enabled: true, Tiers: []operation_setting.TopUpBonusTier{
-				{MinAmount: 1, Type: operation_setting.TopUpBonusTypeFixed, Value: 0.5},
-			}}
 			t.Cleanup(func() {
-				*bonusSetting = oldBonusSetting
+				invalidateCurrentCampaign()
 				DB, LOG_DB = originalDB, originalLogDB
 				common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 				initCol()
@@ -637,13 +718,22 @@ func TestTopUpRewardsDatabaseMatrix(t *testing.T) {
 				}
 			})
 			for range 2 {
-				require.NoError(t, db.AutoMigrate(&User{}, &Log{}, &TopUp{}, &InviteRebate{}, &TopUpBonus{}))
+				require.NoError(t, db.AutoMigrate(&User{}, &Log{}, &TopUp{}, &InviteRebate{}, &TopUpBonus{}, &Campaign{}))
 			}
 			require.True(t, db.Migrator().HasIndex(&InviteRebate{}, "InviteeId"), "invitee_id must stay unique")
 			require.True(t, db.Migrator().HasIndex(&TopUpBonus{}, "TradeNo"), "trade_no must stay unique")
-			for _, table := range []string{"invite_rebates", "top_up_bonuses", "top_ups", "logs", "users"} {
+			require.True(t, db.Migrator().HasIndex(&TopUpBonus{}, "CampaignId"))
+			require.True(t, db.Migrator().HasIndex(&Campaign{}, "Status"))
+			for _, table := range []string{"invite_rebates", "top_up_bonuses", "campaigns", "top_ups", "logs", "users"} {
 				require.NoError(t, db.Exec("DELETE FROM "+table).Error)
 			}
+			// A long page checks the content column holds more than a MySQL TEXT.
+			campaign := Campaign{Title: "matrix", Content: LongText(strings.Repeat("<p>bonus</p>", 10000)), Status: CampaignStatusPublished, PublishedAt: 1}
+			require.NoError(t, ValidateCampaign(&campaign, []TopUpBonusTier{{MinAmount: 1, Type: TopUpBonusTypeFixed, Value: 0.5}}))
+			require.NoError(t, db.Create(&campaign).Error)
+			stored, err := GetCampaignById(campaign.Id)
+			require.NoError(t, err)
+			require.Equal(t, campaign.Content, stored.Content)
 
 			inviter := &User{Username: "rebate_mx_inviter", AffCode: "rebate-mx-inviter", Status: common.UserStatusEnabled, Group: "default"}
 			require.NoError(t, db.Create(inviter).Error)
@@ -679,6 +769,8 @@ func TestTopUpRewardsDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, db.Select("aff_quota").Where("id = ?", inviter.Id).First(&reloaded).Error)
 			assert.Equal(t, 100000, reloaded.AffQuota, "later top-ups are not rebated")
+
+			checkCampaignLifecycle(t, campaign.Id, 3, 3*250000)
 		})
 	}
 }

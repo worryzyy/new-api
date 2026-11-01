@@ -23,12 +23,15 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
-import { sortTopUpBonusTiers, tierReward } from '@/features/activities/lib/bonus'
-import type { TopUpBonusCampaign } from '@/features/activities/types'
+import {
+  sortTopUpBonusTiers,
+  tierReward,
+} from '@/features/activities/lib/bonus'
+import type { CurrentCampaign } from '@/features/activities/types'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 
 interface TopUpBonusBannerProps {
-  campaign: TopUpBonusCampaign | undefined
+  campaign: CurrentCampaign | undefined
 }
 
 export function TopUpBonusBanner(props: TopUpBonusBannerProps) {

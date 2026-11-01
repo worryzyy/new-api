@@ -6,7 +6,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -18,6 +17,7 @@ import (
 type TopUpBonus struct {
 	Id         int    `json:"id"`
 	UserId     int    `json:"user_id" gorm:"index"`
+	CampaignId int    `json:"campaign_id" gorm:"index"`
 	TradeNo    string `json:"trade_no" gorm:"type:varchar(255);uniqueIndex"`
 	TopUpQuota int    `json:"top_up_quota"`
 	BonusQuota int    `json:"bonus_quota"`
@@ -29,21 +29,25 @@ func (TopUpBonus) TableName() string {
 	return "top_up_bonuses"
 }
 
-// grantTopUpBonus credits the top-up bonus tier matching creditedQuota when
-// the order was created while the campaign was active. It runs inside the
+// grantTopUpBonus credits the bonus tier matching creditedQuota of the
+// campaign that was live when the order was created. It runs inside the
 // top-up transaction, after the order's own quota update. A bonus that would
 // push the wallet past its limit is dropped instead of failing the top-up.
 func grantTopUpBonus(tx *gorm.DB, topUp *TopUp, creditedQuota int) (*TopUpBonus, error) {
-	setting := operation_setting.GetTopUpBonusSetting()
-	if creditedQuota <= 0 || topUp.Amount <= 0 || !setting.IsActiveAt(topUp.CreateTime) {
+	if creditedQuota <= 0 || topUp.Amount <= 0 {
 		return nil, nil
+	}
+	campaign, err := campaignForOrder(tx, topUp.CreateTime)
+	if err != nil || campaign == nil {
+		return nil, err
 	}
 
 	credited := decimal.NewFromInt(int64(creditedQuota))
 	quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-	var tier *operation_setting.TopUpBonusTier
-	for i := range setting.Tiers {
-		candidate := setting.Tiers[i]
+	tiers := campaign.Tiers()
+	var tier *TopUpBonusTier
+	for i := range tiers {
+		candidate := tiers[i]
 		if credited.LessThan(decimal.NewFromFloat(candidate.MinAmount).Mul(quotaPerUnit)) {
 			continue
 		}
@@ -57,9 +61,9 @@ func grantTopUpBonus(tx *gorm.DB, topUp *TopUp, creditedQuota int) (*TopUpBonus,
 
 	var bonus decimal.Decimal
 	switch tier.Type {
-	case operation_setting.TopUpBonusTypeFixed:
+	case TopUpBonusTypeFixed:
 		bonus = decimal.NewFromFloat(tier.Value).Mul(quotaPerUnit)
-	case operation_setting.TopUpBonusTypePercent:
+	case TopUpBonusTypePercent:
 		bonus = credited.Mul(decimal.NewFromFloat(tier.Value)).Div(decimal.NewFromInt(100))
 		if tier.MaxBonus > 0 {
 			bonus = decimal.Min(bonus, decimal.NewFromFloat(tier.MaxBonus).Mul(quotaPerUnit))
@@ -74,6 +78,7 @@ func grantTopUpBonus(tx *gorm.DB, topUp *TopUp, creditedQuota int) (*TopUpBonus,
 
 	record := &TopUpBonus{
 		UserId:     topUp.UserId,
+		CampaignId: campaign.Id,
 		TradeNo:    topUp.TradeNo,
 		TopUpQuota: creditedQuota,
 		BonusQuota: bonusQuota,
@@ -132,7 +137,7 @@ func (rewards *TopUpRewards) recordLogs() {
 		return
 	}
 	if bonus := rewards.bonus; bonus != nil {
-		common.SysLog(common.LogText("top-up bonus granted user_id=%d trade_no=%s bonus_quota=%d rule=%q", bonus.UserId, bonus.TradeNo, bonus.BonusQuota, bonus.Rule))
+		common.SysLog(common.LogText("top-up bonus granted user_id=%d campaign_id=%d trade_no=%s bonus_quota=%d rule=%q", bonus.UserId, bonus.CampaignId, bonus.TradeNo, bonus.BonusQuota, bonus.Rule))
 		RecordLog(bonus.UserId, LogTypeSystem, common.NewMessage("Top-up bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(bonus.BonusQuota)}))
 	}
 	rewards.rebate.recordLog()

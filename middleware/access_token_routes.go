@@ -164,6 +164,15 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/option/waffo-pancake/subscription-product":        accessTokenScopeRule("option:write"),
 	"GET /api/option/waffo-pancake/subscription-product-options": accessTokenScopeRule("option:read"),
 
+	// router/api-router.go: /api/campaign
+	"GET /api/campaign/":             accessTokenScopeRule("option:read"),
+	"GET /api/campaign/:id":          accessTokenScopeRule("option:read"),
+	"POST /api/campaign/":            accessTokenScopeRule("option:write"),
+	"PUT /api/campaign/:id":          accessTokenScopeRule("option:write"),
+	"DELETE /api/campaign/:id":       accessTokenScopeRule("option:write"),
+	"POST /api/campaign/:id/publish": accessTokenScopeRule("option:write"),
+	"POST /api/campaign/:id/end":     accessTokenScopeRule("option:write"),
+
 	// router/api-router.go: /api/custom-oauth-provider, /api/ratio_sync
 	"POST /api/custom-oauth-provider/discovery": accessTokenScopeRule("option:write"),
 	"GET /api/custom-oauth-provider/":           accessTokenScopeRule("option:read"),

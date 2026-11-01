@@ -20,7 +20,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
-import { useTopUpBonus } from '@/features/activities/api'
+import { useCurrentCampaign } from '@/features/activities/api'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -31,8 +31,8 @@ import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { TransferDialog } from './components/dialogs/transfer-dialog'
 import { RechargeFormCard } from './components/recharge-form-card'
-import { TopUpBonusBanner } from './components/topup-bonus-banner'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
+import { TopUpBonusBanner } from './components/topup-bonus-banner'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
 import {
@@ -83,7 +83,7 @@ export function Wallet(props: WalletProps) {
   const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
 
   const { status } = useStatus()
-  const { data: topUpBonus } = useTopUpBonus()
+  const { data: campaign } = useCurrentCampaign()
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
 
@@ -292,7 +292,7 @@ export function Wallet(props: WalletProps) {
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
             <WalletStatsCard user={user} loading={userLoading} />
-            <TopUpBonusBanner campaign={topUpBonus} />
+            <TopUpBonusBanner campaign={campaign} />
 
             <div
               className={
@@ -332,9 +332,7 @@ export function Wallet(props: WalletProps) {
                   enableWaffoPancakeTopup={
                     topupInfo?.enable_waffo_pancake_topup
                   }
-                  bonusTiers={
-                    topUpBonus?.active ? topUpBonus.tiers : undefined
-                  }
+                  bonusTiers={campaign?.active ? campaign.tiers : undefined}
                 />
               </div>
 

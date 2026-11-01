@@ -21,17 +21,20 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import type { TopUpBonusResponse } from './types'
+import type { CurrentCampaignResponse } from './types'
 
-export async function getTopUpBonus(): Promise<TopUpBonusResponse> {
-  const res = await api.get('/api/topup/bonus')
+export const CURRENT_CAMPAIGN_QUERY_KEY = ['current-campaign']
+
+export async function getCurrentCampaign(): Promise<CurrentCampaignResponse> {
+  const res = await api.get('/api/campaign/current')
   return res.data
 }
 
-export function useTopUpBonus() {
+/** The published campaign, shared by the header link, the page and the wallet. */
+export function useCurrentCampaign() {
   return useQuery({
-    queryKey: ['topup-bonus'],
-    queryFn: async () => requireServerSuccess(await getTopUpBonus()).data,
+    queryKey: CURRENT_CAMPAIGN_QUERY_KEY,
+    queryFn: async () => requireServerSuccess(await getCurrentCampaign()).data,
     staleTime: 60 * 1000,
     meta: { errorToast: false },
   })

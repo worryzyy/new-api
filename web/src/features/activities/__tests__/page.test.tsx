@@ -23,7 +23,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { createInstance } from 'i18next'
 import type { ReactNode } from 'react'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
@@ -33,11 +33,13 @@ import en from '@/i18n/locales/en.json'
 import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 
-import { TopUpBonusActivity } from '..'
-import type { TopUpBonusCampaign } from '../types'
+import { CampaignPage } from '..'
+import type { CurrentCampaign } from '../types'
 
 vi.mock('@/components/layout', () => ({
-  PublicLayout: (props: { children: ReactNode }) => <main>{props.children}</main>,
+  PublicLayout: (props: { children: ReactNode }) => (
+    <main data-testid='layout'>{props.children}</main>
+  ),
 }))
 
 const i18n = createInstance()
@@ -52,7 +54,7 @@ beforeEach(async () => {
   })
 })
 
-function renderPage(campaign: TopUpBonusCampaign) {
+function renderPage(campaign: CurrentCampaign) {
   vi.spyOn(api, 'get').mockResolvedValue({
     data: { success: true, data: campaign },
   })
@@ -60,7 +62,7 @@ function renderPage(campaign: TopUpBonusCampaign) {
     defaultOptions: { queries: { retry: false } },
   })
   const router = createRouter({
-    routeTree: createRootRoute({ component: TopUpBonusActivity }),
+    routeTree: createRootRoute({ component: CampaignPage }),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
   render(
@@ -77,7 +79,6 @@ test('a running campaign lists its tiers in order with a link to the wallet', as
     visible: true,
     active: true,
     title: '双 11 充值加赠',
-    description: '活动期间单笔充值即送',
     tiers: [
       { min_amount: 500, type: 'percent', value: 8, max_bonus: 50 },
       { min_amount: 100, type: 'fixed', value: 5 },
@@ -88,18 +89,41 @@ test('a running campaign lists its tiers in order with a link to the wallet', as
     await screen.findByRole('heading', { name: '双 11 充值加赠' })
   ).toBeVisible()
   expect(screen.getByText('进行中')).toBeVisible()
-  expect(screen.getByText('活动期间单笔充值即送')).toBeVisible()
   const tiers = screen.getByRole('region', { name: '加赠档位' })
-  expect(tiers).toHaveTextContent(/单笔充值满 \$100.*送 \$5.*单笔充值满 \$500.*加赠 8%.*最多 \$50/)
+  expect(tiers).toHaveTextContent(
+    /单笔充值满 \$100.*送 \$5.*单笔充值满 \$500.*加赠 8%.*最多 \$50/
+  )
   expect(screen.getByText('立即充值').closest('a')).toHaveAttribute(
     'href',
     '/wallet'
   )
 })
 
+test('a campaign with its own page shows the page HTML without scripts', async () => {
+  renderPage({
+    visible: true,
+    active: true,
+    title: '双 11',
+    content:
+      '<h1 style="color:red">双 11 狂欢</h1><script>window.pwned = true</script>',
+    tiers: [{ min_amount: 100, type: 'fixed', value: 5 }],
+  })
+
+  const layout = await screen.findByTestId('layout')
+  await waitFor(() =>
+    expect(layout.querySelector('div')?.shadowRoot?.innerHTML).toContain(
+      '双 11 狂欢'
+    )
+  )
+  const html = layout.querySelector('div')?.shadowRoot?.innerHTML ?? ''
+  expect(html).toContain('color:red')
+  expect(html).not.toContain('<script')
+  expect(screen.queryByText('立即充值')).toBeNull()
+})
+
 test('no visible campaign shows the empty state', async () => {
   renderPage({ visible: false, active: false })
 
-  expect(await screen.findByText('当前没有充值活动')).toBeVisible()
+  expect(await screen.findByText('当前没有活动')).toBeVisible()
   expect(screen.queryByText('立即充值')).toBeNull()
 })

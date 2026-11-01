@@ -21,11 +21,11 @@ import { parseCurrencyDisplayType } from '@/lib/currency'
 import { CheckinSettingsSection } from '../general/checkin-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
-import { TopUpBonusSettingsSection } from '../general/topup-bonus-settings-section'
 import { PaymentSettingsSection } from '../integrations/payment-settings-section'
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { CampaignsSection } from './campaigns/campaigns-section'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -204,20 +204,9 @@ const BILLING_SECTIONS = [
     ),
   },
   {
-    id: 'topup-bonus',
-    titleKey: 'Top-up Bonus',
-    build: (settings: BillingSettings) => (
-      <TopUpBonusSettingsSection
-        defaultValues={{
-          enabled: settings['topup_bonus_setting.enabled'],
-          title: settings['topup_bonus_setting.title'],
-          description: settings['topup_bonus_setting.description'],
-          startTime: settings['topup_bonus_setting.start_time'],
-          endTime: settings['topup_bonus_setting.end_time'],
-          tiers: settings['topup_bonus_setting.tiers'],
-        }}
-      />
-    ),
+    id: 'campaigns',
+    titleKey: 'Campaigns',
+    build: () => <CampaignsSection />,
   },
 ] as const
 

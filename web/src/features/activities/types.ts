@@ -31,20 +31,23 @@ export interface TopUpBonusTier {
   max_bonus?: number
 }
 
-export interface TopUpBonusCampaign {
-  /** Enabled, configured and not yet finished. */
+/** The published campaign, as GET /api/campaign/current serves it. */
+export interface CurrentCampaign {
+  /** Published and not yet past its end time. */
   visible: boolean
   /** Orders created now earn the bonus. */
   active: boolean
+  id?: number
+  title?: string
+  /** The campaign page HTML. */
+  content?: string
   start_time?: number
   end_time?: number
-  title?: string
-  description?: string
   tiers?: TopUpBonusTier[]
 }
 
-export type TopUpBonusResponse = {
+export type CurrentCampaignResponse = {
   success: boolean
   message?: string
-  data: TopUpBonusCampaign
+  data: CurrentCampaign
 }

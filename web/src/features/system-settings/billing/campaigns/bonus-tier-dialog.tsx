@@ -72,7 +72,7 @@ const EMPTY_TIER: TierFormValues = {
   max_bonus: 0,
 }
 
-type TopUpBonusTierDialogProps = {
+type BonusTierDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSave: (tier: TopUpBonusTier) => void
@@ -81,7 +81,7 @@ type TopUpBonusTierDialogProps = {
   takenAmounts: number[]
 }
 
-export function TopUpBonusTierDialog(props: TopUpBonusTierDialogProps) {
+export function BonusTierDialog(props: BonusTierDialogProps) {
   const { t } = useTranslation()
   const form = useForm<TierFormValues>({
     resolver: zodResolver(createTierSchema(t, props.takenAmounts)),
@@ -155,7 +155,9 @@ export function TopUpBonusTierDialog(props: TopUpBonusTierDialogProps) {
                     step='any'
                     min='0'
                     {...field}
-                    onChange={(e) => field.onChange(numberField(e.target.value))}
+                    onChange={(e) =>
+                      field.onChange(numberField(e.target.value))
+                    }
                   />
                 </FormControl>
                 <FormMessage />
@@ -177,7 +179,10 @@ export function TopUpBonusTierDialog(props: TopUpBonusTierDialogProps) {
                   onValueChange={(value) => field.onChange(value)}
                 >
                   <FormControl>
-                    <SelectTrigger className='w-full' aria-label={t('Bonus type')}>
+                    <SelectTrigger
+                      className='w-full'
+                      aria-label={t('Bonus type')}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                   </FormControl>
@@ -208,7 +213,9 @@ export function TopUpBonusTierDialog(props: TopUpBonusTierDialogProps) {
                     step='any'
                     min='0'
                     {...field}
-                    onChange={(e) => field.onChange(numberField(e.target.value))}
+                    onChange={(e) =>
+                      field.onChange(numberField(e.target.value))
+                    }
                   />
                 </FormControl>
                 <FormMessage />

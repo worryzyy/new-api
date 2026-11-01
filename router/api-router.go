@@ -33,7 +33,7 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/user-agreement", controller.GetUserAgreement)
 		apiRouter.GET("/privacy-policy", controller.GetPrivacyPolicy)
 		apiRouter.GET("/about", controller.GetAbout)
-		apiRouter.GET("/topup/bonus", controller.GetTopUpBonus)
+		apiRouter.GET("/campaign/current", controller.GetCurrentCampaign)
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent)
 		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)
@@ -247,6 +247,19 @@ func SetApiRouter(router *gin.Engine) {
 			contentModerationRoute.POST("/users/:id/unban", controller.UnbanContentModerationUser)
 			contentModerationRoute.DELETE("/hashes", controller.DeleteContentModerationHash)
 			contentModerationRoute.DELETE("/hashes/all", controller.ClearContentModerationHashes)
+		}
+
+		// Campaign management (root only)
+		campaignRoute := apiRouter.Group("/campaign")
+		campaignRoute.Use(middleware.RootAuth())
+		{
+			campaignRoute.GET("/", controller.GetCampaigns)
+			campaignRoute.GET("/:id", controller.GetCampaign)
+			campaignRoute.POST("/", controller.CreateCampaign)
+			campaignRoute.PUT("/:id", controller.UpdateCampaign)
+			campaignRoute.DELETE("/:id", controller.DeleteCampaign)
+			campaignRoute.POST("/:id/publish", controller.PublishCampaign)
+			campaignRoute.POST("/:id/end", controller.EndCampaign)
 		}
 
 		// Custom OAuth provider management (root only)

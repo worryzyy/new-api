@@ -52,6 +52,13 @@ var auditRouteActions = map[string]string{
 	"POST /api/option/rest_model_ratio":         "option.reset_ratio",
 	"DELETE /api/option/channel_affinity_cache": "option.clear_affinity_cache",
 
+	// 活动管理（root）
+	"POST /api/campaign/":            "campaign.create",
+	"PUT /api/campaign/:id":          "campaign.update",
+	"DELETE /api/campaign/:id":       "campaign.delete",
+	"POST /api/campaign/:id/publish": "campaign.publish",
+	"POST /api/campaign/:id/end":     "campaign.end",
+
 	// 自定义 OAuth（root）
 	"POST /api/custom-oauth-provider/":      "custom_oauth.create",
 	"PUT /api/custom-oauth-provider/:id":    "custom_oauth.update",

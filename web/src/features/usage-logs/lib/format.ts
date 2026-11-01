@@ -501,6 +501,12 @@ const AUDIT_TEMPLATES: Record<string, string> = {
   'option.payment_compliance': 'Confirmed payment compliance',
   'option.reset_ratio': 'Reset model ratios',
   'option.clear_affinity_cache': 'Cleared channel affinity cache',
+  // Campaigns
+  'campaign.create': 'Created a campaign',
+  'campaign.update': 'Updated a campaign',
+  'campaign.delete': 'Deleted a campaign',
+  'campaign.publish': 'Published a campaign',
+  'campaign.end': 'Ended a campaign',
   // Custom OAuth
   'custom_oauth.create': 'Created a custom OAuth provider',
   'custom_oauth.update': 'Updated a custom OAuth provider',
