@@ -30,10 +30,9 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatCurrencyFromUSD } from '@/lib/currency'
-import { formatTimestampToDate } from '@/lib/format'
 
 import { useCurrentCampaign } from './api'
-import { sortTopUpBonusTiers, tierReward } from './lib/bonus'
+import { campaignPeriod, sortTopUpBonusTiers, tierReward } from './lib/bonus'
 import type { CurrentCampaign } from './types'
 
 /**
@@ -156,18 +155,4 @@ function CampaignDetails(props: { campaign: CurrentCampaign }) {
       </div>
     </>
   )
-}
-
-function campaignPeriod(
-  campaign: CurrentCampaign,
-  t: (key: string, options?: Record<string, unknown>) => string
-): string {
-  const start = campaign.start_time
-    ? formatTimestampToDate(campaign.start_time)
-    : ''
-  const end = campaign.end_time ? formatTimestampToDate(campaign.end_time) : ''
-  if (start && end) return t('{{start}} to {{end}}', { start, end })
-  if (end) return t('Ends {{end}}', { end })
-  if (start) return t('Starts {{start}}', { start })
-  return t('Limited-time offer')
 }

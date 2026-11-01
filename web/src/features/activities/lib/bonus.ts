@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { formatCurrencyFromUSD } from '@/lib/currency'
+import { formatTimestampToDate } from '@/lib/format'
 
-import type { TopUpBonusTier } from '../types'
+import type { CurrentCampaign, TopUpBonusTier } from '../types'
 
 export function sortTopUpBonusTiers(
   tiers: TopUpBonusTier[] | undefined
@@ -57,4 +58,19 @@ export function tierReward(
   return tier.type === 'fixed'
     ? t('Get {{amount}} free', { amount: formatCurrencyFromUSD(tier.value) })
     : t('Get {{percent}}% extra', { percent: tier.value })
+}
+
+/** The campaign period as a sentence, e.g. "2026-11-01 to 2026-11-11". */
+export function campaignPeriod(
+  campaign: CurrentCampaign,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const start = campaign.start_time
+    ? formatTimestampToDate(campaign.start_time)
+    : ''
+  const end = campaign.end_time ? formatTimestampToDate(campaign.end_time) : ''
+  if (start && end) return t('{{start}} to {{end}}', { start, end })
+  if (end) return t('Ends {{end}}', { end })
+  if (start) return t('Starts {{start}}', { start })
+  return t('Limited-time offer')
 }
