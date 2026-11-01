@@ -78,8 +78,8 @@ test('the history lists every campaign and publishing one asks first', async () 
   const user = userEvent.setup()
   renderSection()
 
-  const draftRow = (await screen.findByText('Double 11')).closest('tr')!
-  const liveRow = screen.getByText('Summer sale').closest('tr')!
+  await screen.findByText('Double 11')
+  const [, draftRow, liveRow] = screen.getAllByRole('row')
   expect(draftRow).toHaveTextContent('Draft')
   expect(liveRow).toHaveTextContent('Live')
   expect(liveRow).toHaveTextContent('3 orders')
@@ -114,7 +114,9 @@ test('a new campaign saves its title, page and bonus tiers', async () => {
   await user.click(
     within(dialog).getByRole('button', { name: 'Add bonus tier' })
   )
-  const tierDialog = (await screen.findAllByRole('dialog')).at(-1)!
+  const dialogs = await screen.findAllByRole('dialog')
+  const tierDialog = dialogs.at(-1)
+  if (!tierDialog) throw new Error('the tier dialog did not open')
   const amount = within(tierDialog).getByLabelText(
     'Minimum single top-up (USD)'
   )
