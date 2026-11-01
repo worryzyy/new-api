@@ -187,7 +187,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, paidMoney string, 
 	}
 
 	var quotaToAdd int
-	var rebate *InviteRebate
+	var rewards *TopUpRewards
 	topUp := &TopUp{}
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
@@ -226,7 +226,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, paidMoney string, 
 			return err
 		}
 		var grantErr error
-		rebate, grantErr = grantInviteTopUpRebate(tx, topUp, quotaToAdd)
+		rewards, grantErr = grantTopUpRewards(tx, topUp, quotaToAdd)
 		return grantErr
 	})
 	if err != nil {
@@ -238,8 +238,8 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, paidMoney string, 
 	if alreadyDone {
 		return true, nil
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, common.LogText("epay topup"))
-	rebate.recordLog()
+	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd+rewards.BonusQuota(), common.LogText("epay topup"))
+	rewards.recordLogs()
 
 	common.SysLog(common.LogText("Epay top-up succeeded trade_no=%s user_id=%d quota_to_add=%d money=%.2f", topUp.TradeNo, topUp.UserId, quotaToAdd, topUp.Money))
 	RecordTopupLog(topUp.UserId, common.NewMessage("Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%f", topUp.Money)}), callerIp, topUp.PaymentMethod, PaymentProviderEpay)
@@ -252,7 +252,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	}
 
 	var quota int
-	var rebate *InviteRebate
+	var rewards *TopUpRewards
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -292,7 +292,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		}); err != nil {
 			return err
 		}
-		rebate, err = grantInviteTopUpRebate(tx, topUp, quota)
+		rewards, err = grantTopUpRewards(tx, topUp, quota)
 		return err
 	})
 
@@ -300,8 +300,8 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		common.SysError(common.LogText("topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quota, common.LogText("stripe topup"))
-	rebate.recordLog()
+	syncCreditUserQuotaCache(topUp.UserId, quota+rewards.BonusQuota(), common.LogText("stripe topup"))
+	rewards.recordLogs()
 
 	RecordTopupLog(topUp.UserId, common.NewMessage("Online top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quota), "amount": topUp.Amount}), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
 
@@ -480,7 +480,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	var quotaToAdd int
 	var payMoney float64
 	var paymentMethod string
-	var rebate *InviteRebate
+	var rewards *TopUpRewards
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -527,7 +527,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return err
 		}
 		var err error
-		if rebate, err = grantInviteTopUpRebate(tx, topUp, quotaToAdd); err != nil {
+		if rewards, err = grantTopUpRewards(tx, topUp, quotaToAdd); err != nil {
 			return err
 		}
 
@@ -542,8 +542,8 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	}
 
 	// 事务外记录日志，避免阻塞
-	syncCreditUserQuotaCache(userId, quotaToAdd, common.LogText("manual topup"))
-	rebate.recordLog()
+	syncCreditUserQuotaCache(userId, quotaToAdd+rewards.BonusQuota(), common.LogText("manual topup"))
+	rewards.recordLogs()
 	RecordTopupLog(userId, common.NewMessage("Administrator completed the order, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%f", payMoney)}), callerIp, paymentMethod, "admin")
 	return nil
 }
@@ -553,7 +553,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	}
 
 	var quota int
-	var rebate *InviteRebate
+	var rewards *TopUpRewards
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -609,7 +609,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		if err := creditTopUpQuota(tx, topUp.UserId, quota, updateFields); err != nil {
 			return err
 		}
-		rebate, err = grantInviteTopUpRebate(tx, topUp, quota)
+		rewards, err = grantTopUpRewards(tx, topUp, quota)
 		return err
 	})
 
@@ -617,8 +617,8 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		common.SysError(common.LogText("creem topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quota, common.LogText("creem topup"))
-	rebate.recordLog()
+	syncCreditUserQuotaCache(topUp.UserId, quota+rewards.BonusQuota(), common.LogText("creem topup"))
+	rewards.recordLogs()
 
 	RecordTopupLog(topUp.UserId, common.NewMessage("{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"provider": "Creem", "quota": quota, "amount": fmt.Sprintf("%.2f", topUp.Money)}), callerIp, topUp.PaymentMethod, PaymentMethodCreem)
 
@@ -631,7 +631,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	}
 
 	var quotaToAdd int
-	var rebate *InviteRebate
+	var rewards *TopUpRewards
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -673,7 +673,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
 			return err
 		}
-		rebate, err = grantInviteTopUpRebate(tx, topUp, quotaToAdd)
+		rewards, err = grantTopUpRewards(tx, topUp, quotaToAdd)
 		return err
 	})
 
@@ -681,8 +681,8 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		common.SysError(common.LogText("waffo topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, common.LogText("waffo topup"))
-	rebate.recordLog()
+	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd+rewards.BonusQuota(), common.LogText("waffo topup"))
+	rewards.recordLogs()
 
 	if quotaToAdd > 0 {
 		RecordTopupLog(topUp.UserId, common.NewMessage("{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"provider": "Waffo", "quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%.2f", topUp.Money)}), callerIp, topUp.PaymentMethod, PaymentMethodWaffo)
@@ -697,7 +697,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 	}
 
 	var quotaToAdd int
-	var rebate *InviteRebate
+	var rewards *TopUpRewards
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -739,7 +739,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
 			return err
 		}
-		rebate, err = grantInviteTopUpRebate(tx, topUp, quotaToAdd)
+		rewards, err = grantTopUpRewards(tx, topUp, quotaToAdd)
 		return err
 	})
 
@@ -747,8 +747,8 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 		common.SysError(common.LogText("waffo pancake topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, common.LogText("waffo pancake topup"))
-	rebate.recordLog()
+	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd+rewards.BonusQuota(), common.LogText("waffo pancake topup"))
+	rewards.recordLogs()
 
 	if quotaToAdd > 0 {
 		RecordLog(topUp.UserId, LogTypeTopup, common.NewMessage("{{provider}} top-up succeeded, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"provider": "Waffo Pancake", "quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%.2f", topUp.Money)}))

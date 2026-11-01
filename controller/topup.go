@@ -605,3 +605,24 @@ func AdminCompleteTopUp(c *gin.Context) {
 	}
 	common.ApiSuccess(c, nil)
 }
+
+// GetTopUpBonus serves the top-up bonus campaign for the wallet banner and the
+// public campaign page. A disabled or finished campaign is reported as not
+// visible so that pages hide it.
+func GetTopUpBonus(c *gin.Context) {
+	setting := operation_setting.GetTopUpBonusSetting()
+	now := common.GetTimestamp()
+	visible := setting.Enabled && len(setting.Tiers) > 0 && (setting.EndTime == 0 || now < setting.EndTime)
+	data := gin.H{
+		"visible": visible,
+		"active":  setting.IsActiveAt(now),
+	}
+	if visible {
+		data["start_time"] = setting.StartTime
+		data["end_time"] = setting.EndTime
+		data["title"] = setting.Title
+		data["description"] = setting.Description
+		data["tiers"] = setting.Tiers
+	}
+	common.ApiSuccess(c, data)
+}

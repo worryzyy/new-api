@@ -212,6 +212,16 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorT(c, "Payment, redemption, subscription, and invitation reward features are disabled. The administrator must confirm compliance terms before enabling them.")
 			return
 		}
+	case operation_setting.TopUpBonusTiersOptionKey:
+		if err := operation_setting.ValidateTopUpBonusTiers(option.Value.(string)); err != nil {
+			common.ApiErrorStatus(c, http.StatusBadRequest, err)
+			return
+		}
+	case "topup_bonus_setting.start_time", "topup_bonus_setting.end_time":
+		if ts, err := strconv.ParseInt(option.Value.(string), 10, 64); err != nil || ts < 0 {
+			common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("The campaign time must be a Unix timestamp"))
+			return
+		}
 	case operation_setting.ContentModerationOptionKey:
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Use the content moderation settings to change this option"))
 		return

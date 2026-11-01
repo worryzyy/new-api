@@ -150,3 +150,49 @@ it.each([
     }
   }
 )
+
+it.each([
+  { topupAmount: 600, hint: /本笔可加赠 \$48/ },
+  { topupAmount: 50, hint: null },
+])(
+  'shows the campaign bonus for a $topupAmount top-up only when a tier matches',
+  ({ topupAmount, hint }) => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <RechargeFormCard
+          topupInfo={{
+            enable_online_topup: true,
+            enable_stripe_topup: false,
+            pay_methods: [],
+            min_topup: 1,
+            stripe_min_topup: 1,
+            amount_options: [],
+            discount: {},
+          }}
+          presetAmounts={[]}
+          selectedPreset={null}
+          topupAmount={topupAmount}
+          paymentAmount={topupAmount}
+          calculating={false}
+          paymentLoading={null}
+          redemptionCode=''
+          redeeming={false}
+          onSelectPreset={vi.fn()}
+          onTopupAmountChange={vi.fn()}
+          onPaymentMethodSelect={vi.fn()}
+          onRedemptionCodeChange={vi.fn()}
+          onRedeem={vi.fn()}
+          bonusTiers={[
+            { min_amount: 100, type: 'fixed', value: 5 },
+            { min_amount: 500, type: 'percent', value: 8, max_bonus: 50 },
+          ]}
+        />
+      </I18nextProvider>
+    )
+    if (hint) {
+      expect(screen.getByText(hint)).toBeVisible()
+    } else {
+      expect(screen.queryByText(/本笔可加赠/)).toBeNull()
+    }
+  }
+)

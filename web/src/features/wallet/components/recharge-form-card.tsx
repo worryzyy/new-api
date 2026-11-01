@@ -34,6 +34,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { topUpBonusFor } from '@/features/activities/lib/bonus'
+import type { TopUpBonusTier } from '@/features/activities/types'
+import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -81,6 +84,8 @@ interface RechargeFormCardProps {
   waffoMinTopup?: number
   onWaffoMethodSelect?: (method: WaffoPayMethod, index: number) => void
   enableWaffoPancakeTopup?: boolean
+  /** Tiers of the running top-up bonus campaign. */
+  bonusTiers?: TopUpBonusTier[]
 }
 
 export function RechargeFormCard({
@@ -111,6 +116,7 @@ export function RechargeFormCard({
   waffoMinTopup,
   onWaffoMethodSelect,
   enableWaffoPancakeTopup,
+  bonusTiers,
 }: RechargeFormCardProps) {
   const { t } = useTranslation()
   const [localAmount, setLocalAmount] = useState(topupAmount.toString())
@@ -141,6 +147,7 @@ export function RechargeFormCard({
   const hasWaffoPaymentMethods =
     Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0
   const minTopup = getMinTopupAmount(topupInfo)
+  const bonus = topUpBonusFor(topupAmount, bonusTiers)
   const redemptionEnabled = topupInfo?.enable_redemption !== false
 
   if (loading) {
@@ -321,6 +328,13 @@ export function RechargeFormCard({
                     )}
                   </div>
                 </div>
+                {bonus > 0 ? (
+                  <p className='text-chart-3 text-xs font-medium'>
+                    {t('This top-up earns a {{amount}} bonus', {
+                      amount: formatCurrencyFromUSD(bonus),
+                    })}
+                  </p>
+                ) : null}
               </div>
 
               <div className='space-y-2.5 sm:space-y-3'>

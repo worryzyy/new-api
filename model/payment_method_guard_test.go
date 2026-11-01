@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"math"
 	"net"
 	"net/url"
@@ -465,12 +466,109 @@ func TestTopUpGrantsInviterRebateOnInviteeFirstWalletTopUpOnly(t *testing.T) {
 	}
 }
 
-// TestInviteRebateDatabaseMatrix runs the rebate on real databases: the schema
-// migrates repeatedly, and two first top-ups of one invitee completing at the
-// same time both succeed while the inviter is rebated once. MySQL and
-// PostgreSQL run when INVITE_REBATE_MYSQL_DSN / INVITE_REBATE_POSTGRES_DSN
-// point at a loopback instance.
-func TestInviteRebateDatabaseMatrix(t *testing.T) {
+func TestTopUpBonusGrantsTheHighestMatchingTierOncePerOrder(t *testing.T) {
+	oldQuotaPerUnit, oldPercent := common.QuotaPerUnit, common.InviterTopUpRebatePercent
+	bonusSetting := operation_setting.GetTopUpBonusSetting()
+	oldBonusSetting := *bonusSetting
+	paymentSetting := operation_setting.GetPaymentSetting()
+	oldConfirmed, oldTermsVersion := paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion
+	common.QuotaPerUnit = 500000
+	paymentSetting.ComplianceConfirmed = true
+	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+	t.Cleanup(func() {
+		common.QuotaPerUnit, common.InviterTopUpRebatePercent = oldQuotaPerUnit, oldPercent
+		*bonusSetting = oldBonusSetting
+		paymentSetting.ComplianceConfirmed, paymentSetting.ComplianceTermsVersion = oldConfirmed, oldTermsVersion
+	})
+
+	const start, end = int64(1_800_000_000), int64(1_800_086_400)
+	tiers := []operation_setting.TopUpBonusTier{
+		{MinAmount: 500, Type: operation_setting.TopUpBonusTypePercent, Value: 8, MaxBonus: 50},
+		{MinAmount: 100, Type: operation_setting.TopUpBonusTypeFixed, Value: 5},
+		{MinAmount: 1000, Type: operation_setting.TopUpBonusTypePercent, Value: 10},
+	}
+	testCases := []struct {
+		name        string
+		amount      int64
+		createdAt   int64
+		disabled    bool
+		walletQuota int
+		wantBonus   int64 // in top-up units
+	}{
+		{name: "below the lowest tier", amount: 99, createdAt: start},
+		{name: "fixed tier at its minimum", amount: 100, createdAt: start, wantBonus: 5},
+		{name: "fixed tier above its minimum", amount: 101, createdAt: start, wantBonus: 5},
+		{name: "percent tier", amount: 600, createdAt: start, wantBonus: 48},
+		{name: "percent tier capped", amount: 800, createdAt: start, wantBonus: 50},
+		{name: "highest tier wins", amount: 1000, createdAt: end - 1, wantBonus: 100},
+		{name: "order created before the campaign", amount: 600, createdAt: start - 1},
+		{name: "order created after the campaign", amount: 600, createdAt: end},
+		{name: "campaign switched off", amount: 600, createdAt: start, disabled: true},
+		{name: "bonus dropped when the wallet would overflow", amount: 600, createdAt: start, walletQuota: common.MaxWalletQuota - 600*500000},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			truncateTables(t)
+			*bonusSetting = operation_setting.TopUpBonusSetting{Enabled: !tc.disabled, StartTime: start, EndTime: end, Tiers: tiers}
+			common.InviterTopUpRebatePercent = 10
+			require.NoError(t, DB.Create(&User{Id: 611, Username: "bonus_inviter", AffCode: "bonus-inviter", Status: common.UserStatusEnabled}).Error)
+			require.NoError(t, DB.Create(&User{Id: 612, Username: "bonus_payer", AffCode: "bonus-payer", Status: common.UserStatusEnabled, InviterId: 611, Quota: tc.walletQuota}).Error)
+			order := TopUp{UserId: 612, Amount: tc.amount, Money: float64(tc.amount), TradeNo: "BONUSORDER", PaymentMethod: "alipay",
+				PaymentProvider: PaymentProviderEpay, CreateTime: tc.createdAt, Status: common.TopUpStatusPending}
+			require.NoError(t, DB.Create(&order).Error)
+			paid := fmt.Sprintf("%d.00", tc.amount)
+
+			for range 2 {
+				_, err := RechargeEpay(order.TradeNo, "alipay", paid, "127.0.0.1")
+				require.NoError(t, err)
+			}
+
+			wantBonusQuota := int(tc.wantBonus * 500000)
+			assert.Equal(t, tc.walletQuota+int(tc.amount*500000)+wantBonusQuota, getUserQuotaForPaymentGuardTest(t, 612))
+			var bonuses []TopUpBonus
+			require.NoError(t, DB.Find(&bonuses).Error)
+			if tc.wantBonus == 0 {
+				assert.Empty(t, bonuses)
+			} else {
+				require.Len(t, bonuses, 1)
+				assert.Equal(t, wantBonusQuota, bonuses[0].BonusQuota)
+				assert.Equal(t, int(tc.amount*500000), bonuses[0].TopUpQuota)
+			}
+			var inviter User
+			require.NoError(t, DB.Select("aff_quota").Where("id = ?", 611).First(&inviter).Error)
+			assert.Equal(t, int(tc.amount*500000)/10, inviter.AffQuota, "the rebate counts the paid amount only")
+		})
+	}
+}
+
+func TestValidateTopUpBonusTiers(t *testing.T) {
+	for raw, valid := range map[string]bool{
+		`[]`: true,
+		`[{"min_amount":100,"type":"fixed","value":5},{"min_amount":500,"type":"percent","value":8,"max_bonus":50}]`: true,
+		`{"min_amount":100}`:                                                                          false,
+		`[{"min_amount":0,"type":"fixed","value":5}]`:                                                 false,
+		`[{"min_amount":100,"type":"fixed","value":0}]`:                                               false,
+		`[{"min_amount":100,"type":"percent","value":101}]`:                                           false,
+		`[{"min_amount":100,"type":"percent","value":5,"max_bonus":-1}]`:                              false,
+		`[{"min_amount":100,"type":"bogus","value":5}]`:                                               false,
+		`[{"min_amount":100,"type":"fixed","value":5},{"min_amount":100,"type":"percent","value":5}]`: false,
+	} {
+		err := operation_setting.ValidateTopUpBonusTiers(raw)
+		if valid {
+			assert.NoError(t, err, raw)
+		} else {
+			assert.Error(t, err, raw)
+		}
+	}
+}
+
+// TestTopUpRewardsDatabaseMatrix runs the top-up rewards on real databases: the
+// schema migrates repeatedly, and two first top-ups of one invitee completing
+// at the same time both succeed and each earn the campaign bonus, while the
+// inviter is rebated once. MySQL and PostgreSQL run when
+// INVITE_REBATE_MYSQL_DSN / INVITE_REBATE_POSTGRES_DSN point at a loopback
+// instance.
+func TestTopUpRewardsDatabaseMatrix(t *testing.T) {
 	cases := []struct {
 		name   string
 		env    string
@@ -522,7 +620,13 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 			common.InviterTopUpRebatePercent = 10
 			paymentSetting.ComplianceConfirmed = true
 			paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+			bonusSetting := operation_setting.GetTopUpBonusSetting()
+			oldBonusSetting := *bonusSetting
+			*bonusSetting = operation_setting.TopUpBonusSetting{Enabled: true, Tiers: []operation_setting.TopUpBonusTier{
+				{MinAmount: 1, Type: operation_setting.TopUpBonusTypeFixed, Value: 0.5},
+			}}
 			t.Cleanup(func() {
+				*bonusSetting = oldBonusSetting
 				DB, LOG_DB = originalDB, originalLogDB
 				common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 				initCol()
@@ -533,10 +637,11 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				}
 			})
 			for range 2 {
-				require.NoError(t, db.AutoMigrate(&User{}, &Log{}, &TopUp{}, &InviteRebate{}))
+				require.NoError(t, db.AutoMigrate(&User{}, &Log{}, &TopUp{}, &InviteRebate{}, &TopUpBonus{}))
 			}
 			require.True(t, db.Migrator().HasIndex(&InviteRebate{}, "InviteeId"), "invitee_id must stay unique")
-			for _, table := range []string{"invite_rebates", "top_ups", "logs", "users"} {
+			require.True(t, db.Migrator().HasIndex(&TopUpBonus{}, "TradeNo"), "trade_no must stay unique")
+			for _, table := range []string{"invite_rebates", "top_up_bonuses", "top_ups", "logs", "users"} {
 				require.NoError(t, db.Exec("DELETE FROM "+table).Error)
 			}
 
@@ -556,7 +661,11 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 			require.NoError(t, errs[0])
 			require.NoError(t, errs[1])
 
-			assert.Equal(t, 2*1000000, getUserQuotaForPaymentGuardTest(t, invitee.Id))
+			// Each order credits 1,000,000 quota plus a fixed 0.5-unit bonus.
+			assert.Equal(t, 2*(1000000+250000), getUserQuotaForPaymentGuardTest(t, invitee.Id))
+			var bonuses int64
+			require.NoError(t, db.Model(&TopUpBonus{}).Where("user_id = ?", invitee.Id).Count(&bonuses).Error)
+			assert.Equal(t, int64(2), bonuses)
 			var reloaded User
 			require.NoError(t, db.Select("aff_quota", "aff_history").Where("id = ?", inviter.Id).First(&reloaded).Error)
 			assert.Equal(t, 100000, reloaded.AffQuota)
