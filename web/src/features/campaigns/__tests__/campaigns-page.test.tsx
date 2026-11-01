@@ -23,7 +23,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
-import { CampaignsSection } from '../campaigns-section'
+import { Campaigns } from '..'
 import type { Campaign } from '../types'
 
 const base: Omit<Campaign, 'id' | 'title' | 'status'> = {
@@ -69,7 +69,7 @@ function renderSection() {
   })
   render(
     <QueryClientProvider client={client}>
-      <CampaignsSection />
+      <Campaigns />
     </QueryClientProvider>
   )
 }

@@ -48,9 +48,9 @@ import {
 import type { TopUpBonusTier } from '@/features/activities/types'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 
-import { useCampaign, useCampaignAction } from './api'
+import { useCampaign, useCampaignAction } from '../api'
+import type { CampaignInput } from '../types'
 import { BonusTierDialog } from './bonus-tier-dialog'
-import type { CampaignInput } from './types'
 
 /** Matches the server's page size limit. */
 const MAX_CONTENT_BYTES = 512 * 1024

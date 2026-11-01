@@ -26,6 +26,7 @@ import {
   Key,
   LayoutDashboard,
   ListTodo,
+  Megaphone,
   MessageSquare,
   PlugZap,
   Radio,
@@ -157,6 +158,12 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,
+          },
+          {
+            title: t('Campaigns'),
+            url: '/campaigns',
+            icon: Megaphone,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('Security audit'),
