@@ -22,6 +22,8 @@ import { useTranslation } from 'react-i18next'
 import {
   IconDiscord,
   IconGithub,
+  IconGitlab,
+  IconGoogle,
   IconLinuxDo,
   IconTelegram,
   IconWeChat,
@@ -47,6 +49,29 @@ type ProviderButton = {
   onClick: () => void
   icon?: ReactNode
   disabled?: boolean
+}
+
+const CUSTOM_PROVIDER_ICONS: Record<string, (className: string) => ReactNode> =
+  {
+    discord: (className) => <IconDiscord className={className} />,
+    github: (className) => <IconGithub className={className} />,
+    gitlab: (className) => <IconGitlab className={className} />,
+    google: (className) => <IconGoogle className={className} />,
+    linuxdo: (className) => <IconLinuxDo className={className} />,
+    telegram: (className) => <IconTelegram className={className} />,
+    wechat: (className) => <IconWeChat className={className} />,
+  }
+
+/**
+ * The login button icon of a custom OAuth provider: a known brand name such
+ * as "google", or an image URL. Anything else shows no icon.
+ */
+function customProviderIcon(icon: string | undefined): ReactNode {
+  const value = icon?.trim() ?? ''
+  if (/^(https?:\/\/|data:image\/)/i.test(value)) {
+    return <img src={value} alt='' className='h-4 w-4 object-contain' />
+  }
+  return CUSTOM_PROVIDER_ICONS[value.toLowerCase()]?.('h-4 w-4')
 }
 
 export function OAuthProviders({
@@ -138,6 +163,7 @@ export function OAuthProviders({
         key: `custom-${provider.slug}`,
         label: t('Continue with {{name}}', { name: provider.name }),
         onClick: () => handleCustomOAuthLogin(provider),
+        icon: customProviderIcon(provider.icon),
       })
     }
   }
