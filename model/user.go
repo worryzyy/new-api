@@ -569,11 +569,31 @@ func HardDeleteUserById(id int) (int64, error) {
 	return user.HardDelete()
 }
 
-func inviteUser(inviterId int) error {
+// recordInvitation counts a new user against its inviter. The invitation is
+// always counted; the sign-up bonuses for both sides are paid only when they
+// are configured and payments are compliance-confirmed.
+func (user *User) recordInvitation(inviterId int) {
+	if inviterId == 0 {
+		return
+	}
+	rewards := operation_setting.IsPaymentComplianceConfirmed()
+	if rewards && common.QuotaForInvitee > 0 {
+		_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
+		RecordLog(user.Id, LogTypeSystem, common.NewMessage("Invitation code bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInvitee)}))
+	}
+	inviterQuota := 0
+	if rewards && common.QuotaForInviter > 0 {
+		inviterQuota = common.QuotaForInviter
+		RecordLog(inviterId, LogTypeSystem, common.NewMessage("Bonus for inviting a user {{quota}}", map[string]any{"quota": logger.FormatQuota(inviterQuota)}))
+	}
+	_ = inviteUser(inviterId, inviterQuota)
+}
+
+func inviteUser(inviterId int, quota int) error {
 	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
 		"aff_count":   gorm.Expr("aff_count + ?", 1),
-		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
-		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+		"aff_quota":   gorm.Expr("aff_quota + ?", quota),
+		"aff_history": gorm.Expr("aff_history + ?", quota),
 	})
 	if result.Error != nil {
 		return result.Error
@@ -717,17 +737,7 @@ func (user *User) finishInsert(inviterId int) {
 	if common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, common.NewMessage("New user sign-up bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForNewUser)}))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, common.NewMessage("Invitation code bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInvitee)}))
-		}
-		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
-			RecordLog(inviterId, LogTypeSystem, common.NewMessage("Bonus for inviting a user {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInviter)}))
-			_ = inviteUser(inviterId)
-		}
-	}
+	user.recordInvitation(inviterId)
 }
 
 func (user *User) FinishInsert(inviterId int) {
@@ -774,16 +784,7 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	if common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, common.NewMessage("New user sign-up bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForNewUser)}))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, common.NewMessage("Invitation code bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInvitee)}))
-		}
-		if common.QuotaForInviter > 0 {
-			RecordLog(inviterId, LogTypeSystem, common.NewMessage("Bonus for inviting a user {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInviter)}))
-			_ = inviteUser(inviterId)
-		}
-	}
+	user.recordInvitation(inviterId)
 }
 
 func (user *User) Update(updatePassword bool) error {

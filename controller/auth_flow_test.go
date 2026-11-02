@@ -1123,3 +1123,26 @@ func TestOAuthBindIgnoresLegacyGitHubUsernames(t *testing.T) {
 		})
 	}
 }
+
+func TestOAuthSignUpRecordsAndCountsTheInviter(t *testing.T) {
+	provider := setupAuthFlowControllerTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Log{}))
+	previousRegister, previousInviter := common.RegisterEnabled, common.QuotaForInviter
+	common.RegisterEnabled, common.QuotaForInviter = true, 0
+	t.Cleanup(func() { common.RegisterEnabled, common.QuotaForInviter = previousRegister, previousInviter })
+	inviter := &model.User{Username: "oauth_inviter", AffCode: "oauth-inv", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(inviter).Error)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/oauth/auth-flow-test", nil)
+	user, _, err := findOrCreateOAuthUser(c, provider, &oauth.OAuthUser{ProviderUserID: "invited-user"}, &oauth.OAuthToken{}, "oauth-inv")
+	require.NoError(t, err)
+	require.NotNil(t, user)
+
+	var stored, counted model.User
+	require.NoError(t, model.DB.First(&stored, user.Id).Error)
+	assert.Equal(t, inviter.Id, stored.InviterId)
+	require.NoError(t, model.DB.First(&counted, inviter.Id).Error)
+	assert.Equal(t, 1, counted.AffCount, "the invitation counts even without an inviter reward")
+	assert.Equal(t, 0, counted.AffQuota)
+}
