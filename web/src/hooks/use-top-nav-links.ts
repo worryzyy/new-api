@@ -30,6 +30,8 @@ export type TopNavLink = {
   disabled?: boolean
   requiresAuth?: boolean
   external?: boolean
+  /** Draws attention to the link, e.g. a live campaign */
+  highlight?: boolean
 }
 
 /**
@@ -90,7 +92,7 @@ export function useTopNavLinks(): TopNavLink[] {
 
   // The published campaign, shown until it ends
   if (campaign?.visible) {
-    links.push({ title: t('Campaign'), href: '/activities' })
+    links.push({ title: t('Campaign'), href: '/activities', highlight: true })
   }
 
   // Docs (supports external links)

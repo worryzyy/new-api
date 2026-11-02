@@ -7710,6 +7710,16 @@
     "The title can be at most 100 characters": "Tiêu đề tối đa 100 ký tự",
     "Users see this page at /activities. Styles, images and video are kept; scripts are removed.": "Người dùng xem trang này tại /activities. Kiểu dáng, hình ảnh và video được giữ; mã script bị loại bỏ.",
     "Without a page, users see the title, period and bonus tiers.": "Nếu không có trang, người dùng thấy tiêu đề, thời gian và các mức thưởng.",
-    "{{count}} orders · {{quota}}": "{{count}} đơn · {{quota}}"
+    "{{count}} orders · {{quota}}": "{{count}} đơn · {{quota}}",
+    "Top-up amount": "Số tiền nạp",
+    "You pay": "Bạn trả",
+    "Campaign bonus": "Thưởng chương trình",
+    "Matched tier": "Mức đạt được",
+    "{{amount}} tier": "Mức {{amount}}",
+    "Below the lowest tier": "Chưa đạt mức thấp nhất",
+    "Total credited": "Tổng nhận được",
+    "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "Nạp thêm {{amount}} để đạt mức {{tier}}: thưởng {{bonus}}",
+    "Top tier reached": "Đã đạt mức cao nhất",
+    "Drag to choose an amount": "Kéo để chọn số tiền"
   }
 }

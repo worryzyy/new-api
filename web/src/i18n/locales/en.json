@@ -7710,6 +7710,16 @@
     "The title can be at most 100 characters": "The title can be at most 100 characters",
     "Users see this page at /activities. Styles, images and video are kept; scripts are removed.": "Users see this page at /activities. Styles, images and video are kept; scripts are removed.",
     "Without a page, users see the title, period and bonus tiers.": "Without a page, users see the title, period and bonus tiers.",
-    "{{count}} orders · {{quota}}": "{{count}} orders · {{quota}}"
+    "{{count}} orders · {{quota}}": "{{count}} orders · {{quota}}",
+    "Top-up amount": "Top-up amount",
+    "You pay": "You pay",
+    "Campaign bonus": "Campaign bonus",
+    "Matched tier": "Matched tier",
+    "{{amount}} tier": "{{amount}} tier",
+    "Below the lowest tier": "Below the lowest tier",
+    "Total credited": "Total credited",
+    "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus",
+    "Top tier reached": "Top tier reached",
+    "Drag to choose an amount": "Drag to choose an amount"
   }
 }

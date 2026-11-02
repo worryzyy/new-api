@@ -7710,6 +7710,16 @@
     "The title can be at most 100 characters": "タイトルは最大 100 文字です",
     "Users see this page at /activities. Styles, images and video are kept; scripts are removed.": "ユーザーは /activities でこのページを見ます。スタイル・画像・動画は保持され、スクリプトは削除されます。",
     "Without a page, users see the title, period and bonus tiers.": "ページがない場合、タイトル・期間・ボーナス段階が表示されます。",
-    "{{count}} orders · {{quota}}": "{{count}} 件 · {{quota}}"
+    "{{count}} orders · {{quota}}": "{{count}} 件 · {{quota}}",
+    "Top-up amount": "チャージ金額",
+    "You pay": "お支払い額",
+    "Campaign bonus": "キャンペーンボーナス",
+    "Matched tier": "適用段階",
+    "{{amount}} tier": "{{amount}} の段階",
+    "Below the lowest tier": "最低段階に未達",
+    "Total credited": "合計入金額",
+    "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "あと {{amount}} で {{tier}} の段階に到達し、ボーナス {{bonus}}",
+    "Top tier reached": "最上位の段階に到達しました",
+    "Drag to choose an amount": "スライダーで金額を選択"
   }
 }

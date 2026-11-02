@@ -7710,6 +7710,16 @@
     "The title can be at most 100 characters": "標題最多 100 個字元",
     "Users see this page at /activities. Styles, images and video are kept; scripts are removed.": "使用者在 /activities 看到這個頁面。樣式、圖片和影片會保留，腳本會被移除。",
     "Without a page, users see the title, period and bonus tiers.": "不填頁面時，使用者看到的是標題、活動時間和加贈檔位。",
-    "{{count}} orders · {{quota}}": "{{count}} 筆 · {{quota}}"
+    "{{count}} orders · {{quota}}": "{{count}} 筆 · {{quota}}",
+    "Top-up amount": "儲值金額",
+    "You pay": "實際支付",
+    "Campaign bonus": "活動加贈",
+    "Matched tier": "符合檔位",
+    "{{amount}} tier": "{{amount}} 檔",
+    "Below the lowest tier": "未達到活動門檻",
+    "Total credited": "預計到帳合計",
+    "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "再儲 {{amount}} 升至 {{tier}} 檔，加贈 {{bonus}}",
+    "Top tier reached": "已達到最高檔位",
+    "Drag to choose an amount": "拖動滑桿選擇金額"
   }
 }

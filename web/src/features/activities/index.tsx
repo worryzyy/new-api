@@ -18,7 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
 import { Gift } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
+import { createRoot } from 'react-dom/client'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -32,6 +33,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 
 import { useCurrentCampaign } from './api'
+import {
+  CALCULATOR_SLOT_SELECTOR,
+  CampaignCalculator,
+} from './components/campaign-calculator'
 import { campaignPeriod, sortTopUpBonusTiers, tierReward } from './lib/bonus'
 import type { CurrentCampaign } from './types'
 
@@ -43,16 +48,49 @@ export function CampaignPage() {
   const { t } = useTranslation()
   const query = useCurrentCampaign()
   const html = query.data?.visible ? query.data.content?.trim() : ''
+  const tiers = query.data?.tiers
+  const pageRef = useRef<HTMLDivElement>(null)
+
+  // Fill the page's calculator slots with live calculators. The page renders
+  // in a shadow root without scripts, so the interactive part comes from here.
+  useEffect(() => {
+    const shadow = [...(pageRef.current?.querySelectorAll('*') ?? [])].find(
+      (element) => element.shadowRoot
+    )?.shadowRoot
+    if (!html || !shadow) return
+    const roots = [
+      ...shadow.querySelectorAll<HTMLElement>(CALCULATOR_SLOT_SELECTOR),
+    ].map((slot) => {
+      const root = createRoot(slot)
+      root.render(
+        <CampaignCalculator
+          tiers={tiers}
+          scope={shadow}
+          max={Number(slot.dataset.max) || undefined}
+          value={slot.dataset.value ? Number(slot.dataset.value) : undefined}
+        />
+      )
+      return root
+    })
+    return () => {
+      // Unmount after the current commit; React refuses a synchronous unmount
+      // while it is still rendering.
+      setTimeout(() => roots.forEach((root) => root.unmount()))
+    }
+  }, [html, tiers])
 
   if (html) {
     return (
       <PublicLayout showMainContainer={false}>
-        <RichContent
-          mode='html'
-          htmlVariant='isolated'
-          content={html}
-          className='prose-neutral dark:prose-invert max-w-none'
-        />
+        {/* Clear the fixed header, which the page would otherwise sit under */}
+        <div ref={pageRef} className='pt-16'>
+          <RichContent
+            mode='html'
+            htmlVariant='isolated'
+            content={html}
+            className='prose-neutral dark:prose-invert max-w-none'
+          />
+        </div>
       </PublicLayout>
     )
   }

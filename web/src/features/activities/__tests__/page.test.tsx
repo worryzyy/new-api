@@ -111,11 +111,14 @@ test('a campaign with its own page shows the page HTML without scripts', async (
 
   const layout = await screen.findByTestId('layout')
   await waitFor(() =>
-    expect(layout.querySelector('div')?.shadowRoot?.innerHTML).toContain(
-      '双 11 狂欢'
-    )
+    expect(
+      [...layout.querySelectorAll('*')].find((el) => el.shadowRoot)?.shadowRoot
+        ?.innerHTML
+    ).toContain('双 11 狂欢')
   )
-  const html = layout.querySelector('div')?.shadowRoot?.innerHTML ?? ''
+  const html =
+    [...layout.querySelectorAll('*')].find((el) => el.shadowRoot)?.shadowRoot
+      ?.innerHTML ?? ''
   expect(html).toContain('color:red')
   expect(html).not.toContain('<script')
   expect(screen.queryByText('立即充值')).toBeNull()
@@ -126,4 +129,27 @@ test('no visible campaign shows the empty state', async () => {
 
   expect(await screen.findByText('当前没有活动')).toBeVisible()
   expect(screen.queryByText('立即充值')).toBeNull()
+})
+
+test('a calculator slot on the campaign page becomes a live calculator', async () => {
+  renderPage({
+    visible: true,
+    active: true,
+    id: 3,
+    title: 'Double 11',
+    content:
+      '<style>.x{color:red}</style><button data-amount="100">100</button><div data-campaign-calculator data-max="2000"></div>',
+    tiers: [{ min_amount: 100, type: 'fixed', value: 11 }],
+  })
+
+  const layout = await screen.findByTestId('layout')
+  await waitFor(() => {
+    const shadow = [...layout.querySelectorAll('*')].find(
+      (element) => element.shadowRoot
+    )?.shadowRoot
+    expect(shadow?.querySelector('input[type="range"]')).toHaveAttribute(
+      'max',
+      '2000'
+    )
+  })
 })

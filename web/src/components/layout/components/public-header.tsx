@@ -37,6 +37,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { defaultTopNavLinks } from '../config/top-nav.config'
 import type { TopNavLink } from '../types'
 import { HeaderLogo } from './header-logo'
+import { NavLinkLabel } from './nav-link-label'
 
 const AUTH_PROMPT_SECONDS = 5
 
@@ -276,7 +277,10 @@ export function PublicHeader(props: PublicHeaderProps) {
                       link.disabled && 'pointer-events-none opacity-50'
                     )}
                   >
-                    {t(link.title)}
+                    <NavLinkLabel
+                      title={t(link.title)}
+                      highlight={link.highlight}
+                    />
                   </Link>
                 )
               })}
@@ -400,7 +404,10 @@ export function PublicHeader(props: PublicHeaderProps) {
                   className={linkClassName}
                   style={transitionStyle}
                 >
-                  {t(link.title)}
+                  <NavLinkLabel
+                    title={t(link.title)}
+                    highlight={link.highlight}
+                  />
                 </Link>
               )
             })}

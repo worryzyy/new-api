@@ -7710,6 +7710,16 @@
     "The title can be at most 100 characters": "标题最多 100 个字符",
     "Users see this page at /activities. Styles, images and video are kept; scripts are removed.": "用户在 /activities 看到这个页面。样式、图片和视频会保留，脚本会被移除。",
     "Without a page, users see the title, period and bonus tiers.": "不填页面时，用户看到的是标题、活动时间和加赠档位。",
-    "{{count}} orders · {{quota}}": "{{count}} 笔 · {{quota}}"
+    "{{count}} orders · {{quota}}": "{{count}} 笔 · {{quota}}",
+    "Top-up amount": "充值金额",
+    "You pay": "实际支付",
+    "Campaign bonus": "活动加赠",
+    "Matched tier": "匹配档位",
+    "{{amount}} tier": "{{amount}} 档",
+    "Below the lowest tier": "未达到活动门槛",
+    "Total credited": "预计到账合计",
+    "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "再充 {{amount}} 升至 {{tier}} 档，加赠 {{bonus}}",
+    "Top tier reached": "已达到最高档位",
+    "Drag to choose an amount": "拖动滑块选择金额"
   }
 }

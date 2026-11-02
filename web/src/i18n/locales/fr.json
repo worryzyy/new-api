@@ -7710,6 +7710,16 @@
     "The title can be at most 100 characters": "Le titre ne peut pas dépasser 100 caractères",
     "Users see this page at /activities. Styles, images and video are kept; scripts are removed.": "Les utilisateurs voient cette page sur /activities. Les styles, images et vidéos sont conservés ; les scripts sont supprimés.",
     "Without a page, users see the title, period and bonus tiers.": "Sans page, les utilisateurs voient le titre, la période et les paliers.",
-    "{{count}} orders · {{quota}}": "{{count}} commandes · {{quota}}"
+    "{{count}} orders · {{quota}}": "{{count}} commandes · {{quota}}",
+    "Top-up amount": "Montant de la recharge",
+    "You pay": "Vous payez",
+    "Campaign bonus": "Bonus de la campagne",
+    "Matched tier": "Palier atteint",
+    "{{amount}} tier": "Palier {{amount}}",
+    "Below the lowest tier": "Sous le premier palier",
+    "Total credited": "Total crédité",
+    "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "Ajoutez {{amount}} pour atteindre le palier {{tier}} : {{bonus}} de bonus",
+    "Top tier reached": "Palier maximal atteint",
+    "Drag to choose an amount": "Faites glisser pour choisir un montant"
   }
 }

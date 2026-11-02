@@ -7710,6 +7710,16 @@
     "The title can be at most 100 characters": "Название не длиннее 100 символов",
     "Users see this page at /activities. Styles, images and video are kept; scripts are removed.": "Пользователи видят эту страницу на /activities. Стили, изображения и видео сохраняются, скрипты удаляются.",
     "Without a page, users see the title, period and bonus tiers.": "Без страницы пользователи видят название, период и уровни бонуса.",
-    "{{count}} orders · {{quota}}": "{{count}} заказов · {{quota}}"
+    "{{count}} orders · {{quota}}": "{{count}} заказов · {{quota}}",
+    "Top-up amount": "Сумма пополнения",
+    "You pay": "Вы платите",
+    "Campaign bonus": "Бонус акции",
+    "Matched tier": "Уровень",
+    "{{amount}} tier": "Уровень {{amount}}",
+    "Below the lowest tier": "Ниже минимального уровня",
+    "Total credited": "Итого будет зачислено",
+    "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "Добавьте {{amount}}, чтобы достичь уровня {{tier}}: бонус {{bonus}}",
+    "Top tier reached": "Достигнут максимальный уровень",
+    "Drag to choose an amount": "Перетащите, чтобы выбрать сумму"
   }
 }

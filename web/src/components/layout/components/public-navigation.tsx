@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils'
 
 import { defaultTopNavLinks } from '../config/top-nav.config'
 import type { TopNavLink } from '../types'
+import { NavLinkLabel } from './nav-link-label'
 
 interface PublicNavigationProps {
   /**
@@ -79,7 +80,7 @@ export function PublicNavigation({
               link.disabled && 'pointer-events-none opacity-50'
             )}
           >
-            {link.title}
+            <NavLinkLabel title={link.title} highlight={link.highlight} />
           </Link>
         )
       })}
