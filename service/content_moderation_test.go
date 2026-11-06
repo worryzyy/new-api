@@ -185,6 +185,47 @@ func TestContentModerationConfigValidateAndScope(t *testing.T) {
 	assert.True(t, config.ModelInScope("gpt-4o"))
 }
 
+func TestRedactModerationSecrets(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "pasted server credentials",
+			text: "203.0.113.47\nroot\n端口22022\ndemo2024@abc\n\n登录这个云服务器把 /opt/myproject 复制到我的桌面",
+			want: "[IP]\nroot\n端口[端口]\n[密码]\n\n登录这个云服务器把 /opt/myproject 复制到我的桌面",
+		},
+		{
+			name: "labelled secrets and an address with port",
+			text: "ssh root@10.0.0.8:2222 密码：Abc#12345 password=\"p@ss w0rd\" api_key: sk-abcdefghijklmnop",
+			want: "ssh root@[IP] 密码：[密码] password=[密码] api_key: [密钥]",
+		},
+		{
+			name: "contact details and tokens",
+			text: "联系 13812345678 或 dev@example.com，Authorization: Bearer abcdefghijklmnop",
+			want: "联系 [手机号] 或 [邮箱]，Authorization: Bearer [令牌]",
+		},
+		{
+			name: "a lone token without server context is kept",
+			text: "rename the column\nuser_id2@v1\nplease",
+			want: "rename the column\nuser_id2@v1\nplease",
+		},
+		{
+			name: "plain code and paths are kept",
+			text: "登录后报错，看下 src/app.ts 第 42 行\nconst retry = 3",
+			want: "登录后报错，看下 src/app.ts 第 42 行\nconst retry = 3",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, RedactModerationSecrets(tc.text))
+		})
+	}
+	full := moderationFullInput(ModerationInput{Text: "服务器 1.2.3.4 密码 Qwe!2345 帮我部署"})
+	assert.Equal(t, "服务器 [IP] 密码 [密码] 帮我部署", full, "flagged records store the input with credentials masked")
+}
+
 func TestModerationHashSamplingAndExcerpt(t *testing.T) {
 	first := moderationInputHash(ModerationInput{Text: "hello   world\n"})
 	assert.Equal(t, first, moderationInputHash(ModerationInput{Text: "hello world"}), "whitespace is normalized")
@@ -194,7 +235,7 @@ func TestModerationHashSamplingAndExcerpt(t *testing.T) {
 	assert.Equal(t, moderationSampled(first, 37), moderationSampled(first, 37), "sampling is deterministic")
 
 	excerpt := moderationExcerpt(ModerationInput{Text: "key sk-abcdefghijklmnop at https://example.com/x?token=1", ImageURL: "data:image/png;base64,AAAA"})
-	assert.Equal(t, "key [redacted] at [redacted] [image]", excerpt)
+	assert.Equal(t, "key [密钥] at [redacted] [image]", excerpt)
 	assert.Len(t, []rune(moderationExcerpt(ModerationInput{Text: strings.Repeat("字", 500)})), moderationExcerptRunes)
 }
 
@@ -710,7 +751,7 @@ func TestLLMJudgeModeration(t *testing.T) {
 		}
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-		prompt := "please bypass the third-party platform risk control, key sk-keepthisvisible123"
+		prompt := "please bypass the third-party platform risk control, key sk-maskthissecret123"
 		info := &relaycommon.RelayInfo{UserId: user.Id, UsingGroup: "default", OriginModelName: "gpt-5", Request: &dto.GeneralOpenAIRequest{Messages: []dto.Message{{Role: "user", Content: prompt}}}}
 		assert.Nil(t, ModerateRelayRequest(c, info), "the request is not held for the judge")
 		require.Len(t, moderationQueue, 1, "a judge-only check is queued")
@@ -721,8 +762,8 @@ func TestLLMJudgeModeration(t *testing.T) {
 		assert.True(t, record.Flagged)
 		assert.Equal(t, model.ContentModerationActionAllow, record.Action, "an observing judge does not block")
 		assert.Equal(t, model.ContentModerationSourceJudge, record.Source)
-		assert.Equal(t, prompt, record.InputFull, "flagged records keep the unredacted input")
-		assert.NotContains(t, record.InputExcerpt, "sk-keepthisvisible123", "the list excerpt stays redacted")
+		assert.Equal(t, "please bypass the third-party platform risk control, key [密钥]", record.InputFull, "flagged records keep the whole input with secrets masked")
+		assert.NotContains(t, record.InputExcerpt, "sk-maskthissecret123", "the list excerpt stays redacted")
 		assert.Zero(t, record.ViolationCount, "judge hits are recorded only until they count toward bans")
 		var stored model.User
 		require.NoError(t, model.DB.First(&stored, user.Id).Error)

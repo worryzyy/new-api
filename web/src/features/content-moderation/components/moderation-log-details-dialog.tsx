@@ -53,7 +53,7 @@ export function ModerationLogDetailsDialog(props: { entry: ModerationLog }) {
   if (entry.source === 'upstream') sourceLabel = t('Upstream response')
   if (entry.source === 'judge') sourceLabel = t('LLM judge')
   const isCyber = entry.action === 'cyber_policy'
-  // Only flagged records keep the full, unredacted input.
+  // Only flagged records keep the full input (credentials masked).
   const detail = useQuery({
     queryKey: ['content-moderation', 'log', entry.id],
     queryFn: () => getModerationLog(entry.id),

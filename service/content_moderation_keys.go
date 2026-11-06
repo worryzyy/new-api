@@ -222,7 +222,7 @@ func moderateWithKeyPool(ctx context.Context, config *operation_setting.ContentM
 
 func requestOpenAIModeration(ctx context.Context, config *operation_setting.ContentModerationConfig, key string, input ModerationInput) (OpenAIModerationResult, int, time.Duration, error) {
 	parts := make([]map[string]any, 0, 2)
-	if text := truncateRunes(input.Text, moderationMaxTextRunes); text != "" {
+	if text := RedactModerationSecrets(truncateRunes(input.Text, moderationMaxTextRunes)); text != "" {
 		parts = append(parts, map[string]any{"type": "text", "text": text})
 	}
 	if config.CheckImages && input.ImageURL != "" && len(input.ImageURL) <= moderationMaxImageURLSize {

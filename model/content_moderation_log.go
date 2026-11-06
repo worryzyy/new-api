@@ -60,7 +60,7 @@ type ContentModerationLog struct {
 	CategoryScores    string  `json:"category_scores" gorm:"type:text"`
 	ThresholdSnapshot string  `json:"threshold_snapshot" gorm:"type:text"`
 	InputExcerpt      string  `json:"input_excerpt" gorm:"type:text"`
-	// InputFull is the unredacted latest user turn, kept for flagged records
+	// InputFull is the latest user turn with credentials masked, kept for flagged records
 	// only and returned by the detail endpoint, not the list.
 	InputFull         string `json:"input_full,omitempty" gorm:"type:text"`
 	JudgeReason       string `json:"judge_reason" gorm:"type:text"`

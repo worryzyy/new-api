@@ -67,7 +67,7 @@ func judgeModerationVerdict(verdict JudgeVerdict) ModerationVerdict {
 // in Redis per rules and model, so repeated content is judged once a day.
 func runJudgeModeration(ctx context.Context, config *operation_setting.ContentModerationConfig, input ModerationInput) moderationOutcome {
 	var outcome moderationOutcome
-	text := strings.TrimSpace(input.Text)
+	text := strings.TrimSpace(RedactModerationSecrets(input.Text))
 	if utf8.RuneCountInString(text) < judgeMinInputRunes {
 		return outcome
 	}

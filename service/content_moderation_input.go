@@ -228,18 +228,64 @@ func moderationSampled(inputHash string, rate int) bool {
 	return int(binary.BigEndian.Uint16(raw)%100) < rate
 }
 
-var moderationRedactPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`https?://\S+`),
-	regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{8,}`),
-	regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`),
-	regexp.MustCompile(`\b[A-Fa-f0-9]{32,}\b`),
-	regexp.MustCompile(`[A-Za-z0-9+/_\-]{40,}={0,2}`),
+// moderationSecretPatterns mask credentials and personal data wherever an
+// input leaves the request: audit records and the moderation upstreams. The
+// placeholders keep enough meaning for a reviewer or the judge to follow the
+// request ("log in to [IP] with [密码]").
+var moderationSecretPatterns = []struct {
+	pattern     *regexp.Regexp
+	replacement string
+}{
+	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)`), "[私钥]"},
+	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`), "[令牌]"},
+	{regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}`), "Bearer [令牌]"},
+	{regexp.MustCompile(`\b(?:sk|ghp|gho|ghs|github_pat|xox[abp])[-_][A-Za-z0-9_-]{8,}|\bAKIA[0-9A-Z]{16}\b`), "[密钥]"},
+	{regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)(\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s,;\[\]][^\s,;]*)`), "${1}${2}[密码]"},
+	{regexp.MustCompile(`(密码|口令|密钥|秘钥)(\s*[:：=]?\s*(?:是|为)?\s*)([\x21-\x5a\x5e-\x7e][\x21-\x7e]*)`), "${1}${2}[密码]"},
+	{regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`), "[邮箱]"},
+	{regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?::\d{1,5})?\b`), "[IP]"},
+	{regexp.MustCompile(`(?i)(端口|\bport\b)(\s*[:：=]?\s*(?:是|为)?\s*)\d{2,5}\b`), "${1}${2}[端口]"},
+	{regexp.MustCompile(`\b\d{17}[\dXx]\b`), "[身份证]"},
+	{regexp.MustCompile(`\b1[3-9]\d{9}\b`), "[手机号]"},
+}
+
+var (
+	// A line holding nothing but a password-like token. Paths, URLs and
+	// e-mail addresses never match: '/', ':' and '.' are not allowed.
+	moderationBarePasswordLine = regexp.MustCompile(`(?m)^[ \t]*[A-Za-z0-9!@#$%^&*+=?~_-]{6,64}[ \t]*$`)
+	moderationServerContext    = regexp.MustCompile(`(?i)\[IP\]|\bssh\b|\broot\b|服务器|\bserver\b|登录|登陆|\blogin\b|账号|密码`)
+	moderationRedactPatterns   = []*regexp.Regexp{
+		regexp.MustCompile(`https?://\S+`),
+		regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`),
+		regexp.MustCompile(`\b[A-Fa-f0-9]{32,}\b`),
+		regexp.MustCompile(`[A-Za-z0-9+/_\-]{40,}={0,2}`),
+	}
+)
+
+// RedactModerationSecrets masks server addresses, ports, passwords, keys and
+// personal data in a user input. A bare password on its own line, which needs
+// a digit and a symbol, is masked only next to server or login details, where
+// pasted credentials appear.
+func RedactModerationSecrets(text string) string {
+	for _, secret := range moderationSecretPatterns {
+		text = secret.pattern.ReplaceAllString(text, secret.replacement)
+	}
+	if !moderationServerContext.MatchString(text) {
+		return text
+	}
+	return moderationBarePasswordLine.ReplaceAllStringFunc(text, func(line string) string {
+		token := strings.TrimSpace(line)
+		if !strings.ContainsAny(token, "0123456789") || !strings.ContainsAny(token, "!@#$%^&*+=?~") {
+			return line
+		}
+		return strings.Replace(line, token, "[密码]", 1)
+	})
 }
 
 // moderationExcerpt is the redacted, truncated input stored in records so
 // secrets pasted into prompts do not end up in the audit table.
 func moderationExcerpt(input ModerationInput) string {
-	text := input.Text
+	text := RedactModerationSecrets(input.Text)
 	for _, pattern := range moderationRedactPatterns {
 		text = pattern.ReplaceAllString(text, "[redacted]")
 	}
@@ -250,10 +296,10 @@ func moderationExcerpt(input ModerationInput) string {
 	return strings.TrimSpace(text)
 }
 
-// moderationFullInput is the unredacted input stored with flagged records so
-// administrators can review exactly what was sent.
+// moderationFullInput is the whole input stored with flagged records so
+// administrators can review what was asked, with credentials masked.
 func moderationFullInput(input ModerationInput) string {
-	text := truncateRunes(input.Text, moderationMaxTextRunes)
+	text := RedactModerationSecrets(truncateRunes(input.Text, moderationMaxTextRunes))
 	if utf8.RuneCountInString(input.Text) > moderationMaxTextRunes {
 		text += "\n[truncated]"
 	}
