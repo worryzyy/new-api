@@ -31,24 +31,29 @@ import { testJudge } from '../../api'
 import { splitLines, type ModerationFormValues } from '../../lib/config-form'
 import { formatPercent } from '../../lib/display'
 
-/** Runs the judge on a sample with the unsaved form values. */
+/** Runs the judge or the reviewer on a sample with the unsaved form values. */
 export function JudgeTestPanel() {
   const { t } = useTranslation()
   const id = useId()
   const form = useFormContext<ModerationFormValues>()
   const [prompt, setPrompt] = useState('')
   const test = useMutation({
-    mutationFn: () => {
+    mutationFn: (reviewer: boolean) => {
       const values = form.getValues()
-      const keys = splitLines(values.judge_new_api_keys)
+      const keys = splitLines(
+        reviewer ? values.review_new_api_keys : values.judge_new_api_keys
+      )
       return testJudge({
         api_keys: keys.length > 0 ? keys.slice(0, 1) : undefined,
-        base_url: values.judge_base_url,
-        model: values.judge_model,
-        timeout_ms: values.judge_timeout_ms,
+        base_url: reviewer ? values.review_base_url : values.judge_base_url,
+        model: reviewer ? values.review_model : values.judge_model,
+        timeout_ms: reviewer
+          ? values.review_timeout_ms
+          : values.judge_timeout_ms,
         rules: values.judge_rules,
         threshold: values.judge_threshold / 100,
         prompt,
+        reviewer,
       })
     },
     onError: (error) => handleServerError(error, t('Moderation test failed')),
@@ -67,14 +72,25 @@ export function JudgeTestPanel() {
         )}
         onChange={(event) => setPrompt(event.target.value)}
       />
-      <div>
+      <div className='flex flex-wrap gap-2'>
         <Button
           type='button'
           size='sm'
           disabled={!prompt.trim() || test.isPending}
-          onClick={() => test.mutate()}
+          onClick={() => test.mutate(false)}
         >
-          {test.isPending ? t('Testing...') : t('Run test')}
+          {test.isPending && !test.variables ? t('Testing...') : t('Run test')}
+        </Button>
+        <Button
+          type='button'
+          size='sm'
+          variant='outline'
+          disabled={!prompt.trim() || test.isPending}
+          onClick={() => test.mutate(true)}
+        >
+          {test.isPending && test.variables
+            ? t('Testing...')
+            : t('Test reviewer')}
         </Button>
       </div>
       {result?.error && (
@@ -88,6 +104,9 @@ export function JudgeTestPanel() {
           className='flex flex-col gap-1 rounded-lg border p-3 text-sm'
         >
           <div className='flex flex-wrap items-center gap-2'>
+            <span className='text-muted-foreground'>
+              {test.variables ? t('Reviewer') : t('Judge')}
+            </span>
             <StatusBadge
               label={result.flagged ? t('Hit') : t('Passed')}
               variant={result.flagged ? 'danger' : 'success'}

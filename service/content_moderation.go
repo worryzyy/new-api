@@ -361,7 +361,7 @@ func processModerationJob(job *moderationJob) {
 	}()
 	config := operation_setting.GetContentModerationConfig()
 	if job.check {
-		timeoutMs := max(config.TimeoutMs, config.JudgeTimeout)*(config.RetryCount+1) + 1000
+		timeoutMs := (max(config.TimeoutMs, config.JudgeTimeout)+config.ReviewTimeout)*(config.RetryCount+1) + 1000
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
 		if job.judgeOnly {
 			inputHash := job.outcome.inputHash
@@ -601,6 +601,12 @@ type ContentModerationStatus struct {
 	JudgeAvgLatencyMs      int64 `json:"judge_avg_latency_ms"`
 	JudgeKeyCount          int   `json:"judge_key_count"`
 	JudgeKeyAvailableCount int   `json:"judge_key_available_count"`
+
+	ReviewEnabled   bool  `json:"review_enabled"`
+	ReviewChecked   int64 `json:"review_checked"`
+	ReviewOverruled int64 `json:"review_overruled"`
+	ReviewErrors    int64 `json:"review_errors"`
+	ReviewKeyCount  int   `json:"review_key_count"`
 }
 
 // GetContentModerationStatus reports this process's runtime counters; they
@@ -642,6 +648,11 @@ func GetContentModerationStatus() ContentModerationStatus {
 		JudgeCacheHits:           judgeStats.cacheHits.Load(),
 		JudgeKeyCount:            len(config.JudgeAPIKeys),
 		JudgeKeyAvailableCount:   availableModerationKeyCount(config.JudgeAPIKeys),
+		ReviewEnabled:            config.ReviewEnabled,
+		ReviewChecked:            reviewStats.checked.Load(),
+		ReviewOverruled:          reviewStats.overruled.Load(),
+		ReviewErrors:             reviewStats.errors.Load(),
+		ReviewKeyCount:           len(config.ReviewAPIKeys),
 	}
 	if status.JudgeChecked > 0 {
 		status.JudgeAvgLatencyMs = judgeStats.latencyMs.Load() / status.JudgeChecked
@@ -668,6 +679,9 @@ type ContentModerationConfigView struct {
 	JudgeAPIKeys        []string              `json:"judge_api_keys"`
 	JudgeAPIKeyStatuses []ModerationKeyStatus `json:"judge_api_key_statuses"`
 	JudgeDefaultRules   string                `json:"judge_default_rules"`
+
+	ReviewAPIKeys        []string              `json:"review_api_keys"`
+	ReviewAPIKeyStatuses []ModerationKeyStatus `json:"review_api_key_statuses"`
 }
 
 // GetContentModerationConfigView returns the config without plaintext keys.
@@ -687,19 +701,23 @@ func GetContentModerationConfigView() ContentModerationConfigView {
 		JudgeAPIKeys:            []string{},
 		JudgeAPIKeyStatuses:     moderationKeyStatuses(config.JudgeAPIKeys, true),
 		JudgeDefaultRules:       operation_setting.DefaultContentModerationJudgeRules,
+		ReviewAPIKeys:           []string{},
+		ReviewAPIKeyStatuses:    moderationKeyStatuses(config.ReviewAPIKeys, true),
 	}
 }
 
 // ContentModerationConfigUpdate replaces all settings except the keys, which
 // are changed through APIKeysMode, DeleteAPIKeyHashes and ClearAPIKeys so the
-// stored keys never need to be sent back to the browser. Judge keys are kept
-// unless new ones are sent (which replace them) or ClearJudgeAPIKeys is set.
+// stored keys never need to be sent back to the browser. Judge and reviewer
+// keys are kept unless new ones are sent (which replace them) or their clear
+// flag is set.
 type ContentModerationConfigUpdate struct {
 	operation_setting.ContentModerationConfig
 	APIKeysMode        string   `json:"api_keys_mode"`
 	DeleteAPIKeyHashes []string `json:"delete_api_key_hashes"`
 	ClearAPIKeys       bool     `json:"clear_api_keys"`
 	ClearJudgeAPIKeys  bool     `json:"clear_judge_api_keys"`
+	ClearReviewAPIKeys bool     `json:"clear_review_api_keys"`
 }
 
 func UpdateContentModerationConfig(update ContentModerationConfigUpdate) error {
@@ -723,6 +741,12 @@ func UpdateContentModerationConfig(update ContentModerationConfigUpdate) error {
 		next.JudgeAPIKeys = []string{}
 	case len(next.JudgeAPIKeys) == 0:
 		next.JudgeAPIKeys = current.JudgeAPIKeys
+	}
+	switch {
+	case update.ClearReviewAPIKeys:
+		next.ReviewAPIKeys = []string{}
+	case len(next.ReviewAPIKeys) == 0:
+		next.ReviewAPIKeys = current.ReviewAPIKeys
 	}
 	if err := next.Validate(); err != nil {
 		return err

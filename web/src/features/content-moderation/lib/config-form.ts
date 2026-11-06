@@ -97,6 +97,12 @@ export const moderationFormSchema = z
     // Percentage 1-100, stored on the server as 0-1.
     judge_threshold: integer(1, 100),
     judge_count_toward_ban: z.boolean(),
+    review_enabled: z.boolean(),
+    review_base_url: z.string().trim().url(),
+    review_model: z.string().trim().min(1),
+    review_new_api_keys: z.string(),
+    clear_review_api_keys: z.boolean(),
+    review_timeout_ms: integer(1000, 60000),
   })
   .superRefine((values, context) => {
     if (!values.all_groups && values.groups.length === 0) {
@@ -208,6 +214,12 @@ export function formValuesFromConfig(
     judge_rules: config.judge_rules ?? '',
     judge_threshold: Math.round((config.judge_threshold || 0.8) * 100),
     judge_count_toward_ban: config.judge_count_toward_ban ?? false,
+    review_enabled: config.review_enabled ?? false,
+    review_base_url: config.review_base_url ?? '',
+    review_model: config.review_model ?? '',
+    review_new_api_keys: '',
+    clear_review_api_keys: false,
+    review_timeout_ms: config.review_timeout_ms || 20000,
   }
 }
 
@@ -273,5 +285,12 @@ export function buildConfigUpdate(
     judge_rules: values.judge_rules.trim(),
     judge_threshold: values.judge_threshold / 100,
     judge_count_toward_ban: values.judge_count_toward_ban,
+    review_enabled: values.review_enabled,
+    review_base_url: values.review_base_url.trim(),
+    review_model: values.review_model.trim(),
+    // Entered keys replace the saved ones; none keeps them.
+    review_api_keys: splitLines(values.review_new_api_keys),
+    clear_review_api_keys: values.clear_review_api_keys,
+    review_timeout_ms: values.review_timeout_ms,
   }
 }

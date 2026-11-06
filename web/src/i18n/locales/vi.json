@@ -7720,6 +7720,20 @@
     "Total credited": "Tổng nhận được",
     "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "Nạp thêm {{amount}} để đạt mức {{tier}}: thưởng {{bonus}}",
     "Top tier reached": "Đã đạt mức cao nhất",
-    "Drag to choose an amount": "Kéo để chọn số tiền"
+    "Drag to choose an amount": "Kéo để chọn số tiền",
+    "Second-pass review": "Kiểm tra lại",
+    "Review judge hits": "Kiểm tra lại các vi phạm do trọng tài phát hiện",
+    "Each judge hit is checked again by a policy model such as gpt-oss-safeguard under the same rules and threshold. A hit counts only when the reviewer agrees; it stands if the reviewer cannot be reached.": "Mỗi vi phạm do trọng tài phát hiện được một mô hình chính sách như gpt-oss-safeguard kiểm tra lại theo cùng quy tắc và ngưỡng. Chỉ tính khi bên kiểm tra đồng ý; nếu không kết nối được thì giữ nguyên kết quả.",
+    "OpenAI-compatible endpoint, for example https://openrouter.ai/api or https://api.groq.com/openai.": "Endpoint tương thích OpenAI, ví dụ https://openrouter.ai/api hoặc https://api.groq.com/openai.",
+    "Review model": "Mô hình kiểm tra lại",
+    "The reviewer reasons before answering, so allow more time than the judge.": "Mô hình kiểm tra lại suy luận trước khi trả lời, hãy cho nhiều thời gian hơn trọng tài.",
+    "Review API keys": "Khóa API kiểm tra lại",
+    "No review API key configured": "Chưa cấu hình khóa API kiểm tra lại",
+    "The reviewer is enabled but has no API key.": "Đã bật kiểm tra lại nhưng chưa có khóa API.",
+    "{{reviewed}} reviewed, {{overruled}} overruled, {{errors}} review errors": "Đã kiểm tra lại {{reviewed}}, bác bỏ {{overruled}}, lỗi kiểm tra {{errors}}",
+    "Test reviewer": "Thử mô hình kiểm tra lại",
+    "Reviewer": "Kiểm tra lại",
+    "Judge": "Trọng tài",
+    "Invalid review API base URL": "URL cơ sở API kiểm tra lại không hợp lệ"
   }
 }

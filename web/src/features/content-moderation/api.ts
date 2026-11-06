@@ -69,6 +69,11 @@ export interface ModerationConfig {
   judge_rules: string
   judge_threshold: number
   judge_count_toward_ban: boolean
+  review_enabled: boolean
+  review_base_url: string
+  review_model: string
+  review_api_keys: string[]
+  review_timeout_ms: number
 }
 
 export type JudgeMode = 'observe' | 'pre_block'
@@ -110,6 +115,7 @@ export interface ModerationConfigView extends ModerationConfig {
   api_key_statuses: ModerationKeyStatus[]
   judge_api_key_statuses: ModerationKeyStatus[]
   judge_default_rules: string
+  review_api_key_statuses: ModerationKeyStatus[]
 }
 
 export interface ModerationConfigUpdate extends ModerationConfig {
@@ -117,6 +123,7 @@ export interface ModerationConfigUpdate extends ModerationConfig {
   delete_api_key_hashes: string[]
   clear_api_keys: boolean
   clear_judge_api_keys: boolean
+  clear_review_api_keys: boolean
 }
 
 export interface ModerationStatus {
@@ -161,6 +168,11 @@ export interface ModerationStatus {
   judge_avg_latency_ms: number
   judge_key_count: number
   judge_key_available_count: number
+  review_enabled: boolean
+  review_checked: number
+  review_overruled: number
+  review_errors: number
+  review_key_count: number
 }
 
 export type ModerationAction =
@@ -242,6 +254,8 @@ export interface JudgeTestRequest {
   rules?: string
   threshold?: number
   prompt: string
+  /** Tests the reviewer; the endpoint fields are then the reviewer's. */
+  reviewer?: boolean
 }
 
 export interface JudgeTestResult {

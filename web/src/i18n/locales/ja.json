@@ -7720,6 +7720,20 @@
     "Total credited": "合計入金額",
     "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "あと {{amount}} で {{tier}} の段階に到達し、ボーナス {{bonus}}",
     "Top tier reached": "最上位の段階に到達しました",
-    "Drag to choose an amount": "スライダーで金額を選択"
+    "Drag to choose an amount": "スライダーで金額を選択",
+    "Second-pass review": "再審査",
+    "Review judge hits": "判定ヒットを再審査",
+    "Each judge hit is checked again by a policy model such as gpt-oss-safeguard under the same rules and threshold. A hit counts only when the reviewer agrees; it stands if the reviewer cannot be reached.": "判定のヒットは gpt-oss-safeguard などのポリシーモデルが同じルールとしきい値で再審査します。再審査も違反と判断した場合のみヒットとし、再審査モデルに接続できない場合は元のヒットを残します。",
+    "OpenAI-compatible endpoint, for example https://openrouter.ai/api or https://api.groq.com/openai.": "OpenAI 互換のエンドポイント。例: https://openrouter.ai/api、https://api.groq.com/openai",
+    "Review model": "再審査モデル",
+    "The reviewer reasons before answering, so allow more time than the judge.": "再審査モデルは推論してから回答するため、判定より長めのタイムアウトにしてください。",
+    "Review API keys": "再審査 API キー",
+    "No review API key configured": "再審査 API キーが未設定です",
+    "The reviewer is enabled but has no API key.": "再審査が有効ですが API キーがありません。",
+    "{{reviewed}} reviewed, {{overruled}} overruled, {{errors}} review errors": "再審査 {{reviewed}} 件、覆した {{overruled}} 件、再審査エラー {{errors}} 件",
+    "Test reviewer": "再審査モデルをテスト",
+    "Reviewer": "再審査",
+    "Judge": "判定",
+    "Invalid review API base URL": "再審査 API のベース URL が無効です"
   }
 }

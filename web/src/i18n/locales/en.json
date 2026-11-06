@@ -7720,6 +7720,20 @@
     "Total credited": "Total credited",
     "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus",
     "Top tier reached": "Top tier reached",
-    "Drag to choose an amount": "Drag to choose an amount"
+    "Drag to choose an amount": "Drag to choose an amount",
+    "Second-pass review": "Second-pass review",
+    "Review judge hits": "Review judge hits",
+    "Each judge hit is checked again by a policy model such as gpt-oss-safeguard under the same rules and threshold. A hit counts only when the reviewer agrees; it stands if the reviewer cannot be reached.": "Each judge hit is checked again by a policy model such as gpt-oss-safeguard under the same rules and threshold. A hit counts only when the reviewer agrees; it stands if the reviewer cannot be reached.",
+    "OpenAI-compatible endpoint, for example https://openrouter.ai/api or https://api.groq.com/openai.": "OpenAI-compatible endpoint, for example https://openrouter.ai/api or https://api.groq.com/openai.",
+    "Review model": "Review model",
+    "The reviewer reasons before answering, so allow more time than the judge.": "The reviewer reasons before answering, so allow more time than the judge.",
+    "Review API keys": "Review API keys",
+    "No review API key configured": "No review API key configured",
+    "The reviewer is enabled but has no API key.": "The reviewer is enabled but has no API key.",
+    "{{reviewed}} reviewed, {{overruled}} overruled, {{errors}} review errors": "{{reviewed}} reviewed, {{overruled}} overruled, {{errors}} review errors",
+    "Test reviewer": "Test reviewer",
+    "Reviewer": "Reviewer",
+    "Judge": "Judge",
+    "Invalid review API base URL": "Invalid review API base URL"
   }
 }

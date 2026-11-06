@@ -69,6 +69,12 @@ const config: ModerationConfigView = {
   judge_count_toward_ban: false,
   judge_api_key_statuses: [],
   judge_default_rules: 'default rules',
+  review_enabled: true,
+  review_base_url: 'https://openrouter.ai/api',
+  review_model: 'openai/gpt-oss-safeguard-20b',
+  review_api_keys: [],
+  review_timeout_ms: 20000,
+  review_api_key_statuses: [],
   api_key_configured: true,
   api_key_count: 1,
   api_key_masks: ['********OMkA'],
@@ -165,6 +171,21 @@ describe('ModerationSettingsDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Reset to defaults' }))
 
     expect(rules).toHaveValue('default rules')
+  })
+
+  it('warns on the judge tab when the reviewer is enabled without a key', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+    await screen.findByRole('dialog', { name: 'Content audit settings' })
+
+    await user.click(screen.getByRole('tab', { name: 'LLM judge' }))
+
+    expect(screen.getByRole('textbox', { name: 'Review model' })).toHaveValue(
+      'openai/gpt-oss-safeguard-20b'
+    )
+    expect(
+      screen.getByText('The reviewer is enabled but has no API key.')
+    ).toBeInTheDocument()
   })
 
   it('opens on the basic tab with the saved key listed', async () => {

@@ -47,6 +47,30 @@ type judgeRuntimeStats struct {
 
 var judgeStats judgeRuntimeStats
 
+var reviewStats struct {
+	checked   atomic.Int64
+	overruled atomic.Int64
+	errors    atomic.Int64
+}
+
+// judgeEndpoint is a chat model that answers with a JudgeVerdict: the judge
+// itself, or the reviewer that re-checks its hits.
+type judgeEndpoint struct {
+	baseURL   string
+	model     string
+	keys      []string
+	timeoutMs int
+	reviewer  bool
+}
+
+func judgeEndpointOf(config *operation_setting.ContentModerationConfig) judgeEndpoint {
+	return judgeEndpoint{baseURL: config.JudgeBaseURL, model: config.JudgeModel, keys: config.JudgeAPIKeys, timeoutMs: config.JudgeTimeout}
+}
+
+func reviewEndpointOf(config *operation_setting.ContentModerationConfig) judgeEndpoint {
+	return judgeEndpoint{baseURL: config.ReviewBaseURL, model: config.ReviewModel, keys: config.ReviewAPIKeys, timeoutMs: config.ReviewTimeout, reviewer: true}
+}
+
 // judgeFlags reports whether a verdict is a violation under the threshold.
 func judgeFlags(verdict JudgeVerdict, threshold float64) bool {
 	return verdict.Violation && verdict.Confidence >= threshold
@@ -80,7 +104,7 @@ func runJudgeModeration(ctx context.Context, config *operation_setting.ContentMo
 		judgeStats.cacheHits.Add(1)
 		return outcome
 	}
-	verdict, latency, err := judgeWithKeyPool(ctx, config, text)
+	verdict, latency, err := judgeWithKeyPool(ctx, config, judgeEndpointOf(config), text)
 	outcome.upstreamLatency = latency
 	judgeStats.checked.Add(1)
 	judgeStats.latencyMs.Add(latency.Milliseconds())
@@ -92,6 +116,23 @@ func runJudgeModeration(ctx context.Context, config *operation_setting.ContentMo
 	if !judgeFlags(verdict, config.JudgeThreshold) {
 		storeJudgePass(cacheKey)
 		return outcome
+	}
+	if config.ReviewEnabled && len(config.ReviewAPIKeys) > 0 {
+		review, reviewLatency, reviewErr := judgeWithKeyPool(ctx, config, reviewEndpointOf(config), text)
+		outcome.upstreamLatency += reviewLatency
+		reviewStats.checked.Add(1)
+		switch {
+		case reviewErr != nil:
+			// An unreachable reviewer leaves the judge hit standing.
+			reviewStats.errors.Add(1)
+			verdict.Reason = strings.TrimSpace(verdict.Reason) + "（复核失败：" + truncateRunes(reviewErr.Error(), 80) + "）"
+		case !judgeFlags(review, config.JudgeThreshold):
+			reviewStats.overruled.Add(1)
+			storeJudgePass(cacheKey)
+			return outcome
+		default:
+			verdict.Reason = "初审：" + strings.TrimSpace(verdict.Reason) + "；复核：" + strings.TrimSpace(review.Reason)
+		}
 	}
 	judgeStats.flagged.Add(1)
 	outcome.verdict = judgeModerationVerdict(verdict)
@@ -123,17 +164,17 @@ func storeJudgePass(key string) {
 
 // judgeWithKeyPool calls the judge with round-robin keys and the same freeze
 // and retry rules as the moderation key pool.
-func judgeWithKeyPool(ctx context.Context, config *operation_setting.ContentModerationConfig, text string) (JudgeVerdict, time.Duration, error) {
+func judgeWithKeyPool(ctx context.Context, config *operation_setting.ContentModerationConfig, endpoint judgeEndpoint, text string) (JudgeVerdict, time.Duration, error) {
 	tried := map[string]bool{}
 	lastErr := errNoJudgeKey
 	var totalLatency time.Duration
 	for attempt := range config.RetryCount + 1 {
-		key := pickModerationKey(config.JudgeAPIKeys, tried)
+		key := pickModerationKey(endpoint.keys, tried)
 		if key == "" {
 			break
 		}
 		tried[key] = true
-		verdict, status, latency, err := requestJudge(ctx, config, key, text)
+		verdict, status, latency, err := requestJudge(ctx, config.JudgeRules, endpoint, key, text)
 		totalLatency += latency
 		recordModerationKeyOutcome(key, status, latency, err, false, false)
 		if err == nil {
@@ -161,13 +202,13 @@ func judgeSystemPrompt(rules string) string {
 		`只输出一个 JSON 对象，不要输出其他任何文字，格式为：{"violation": true 或 false, "category": "违规类别简称，不违规时为空字符串", "confidence": 0 到 1 之间的数字，表示内容违规的可能性, "reason": "一句话说明理由，不超过 60 字"}`
 }
 
-func requestJudge(ctx context.Context, config *operation_setting.ContentModerationConfig, key string, text string) (JudgeVerdict, int, time.Duration, error) {
+func requestJudge(ctx context.Context, rules string, endpoint judgeEndpoint, key string, text string) (JudgeVerdict, int, time.Duration, error) {
 	// A closing tag inside the text must not end the reviewed block early.
 	content := strings.ReplaceAll(truncateRunes(text, judgeMaxInputRunes), "</"+judgeContentTag+">", "</ "+judgeContentTag+">")
-	body, err := common.Marshal(map[string]any{
-		"model": config.JudgeModel,
+	payload := map[string]any{
+		"model": endpoint.model,
 		"messages": []map[string]string{
-			{"role": "system", "content": judgeSystemPrompt(config.JudgeRules)},
+			{"role": "system", "content": judgeSystemPrompt(rules)},
 			{"role": "user", "content": "<" + judgeContentTag + ">\n" + content + "\n</" + judgeContentTag + ">"},
 		},
 		"temperature": 0,
@@ -178,17 +219,27 @@ func requestJudge(ctx context.Context, config *operation_setting.ContentModerati
 		"response_format": map[string]string{"type": "json_object"},
 		// DeepSeek models think by default; a verdict does not need it.
 		"thinking": map[string]string{"type": "disabled"},
-	})
+	}
+	if endpoint.reviewer {
+		// The reviewer is a reasoning policy model: it keeps its default
+		// reasoning, which shares the token budget with the verdict, and
+		// providers of open models do not all support JSON mode or the
+		// DeepSeek thinking switch.
+		payload["max_tokens"] = 4096
+		delete(payload, "response_format")
+		delete(payload, "thinking")
+	}
+	body, err := common.Marshal(payload)
 	if err != nil {
 		return JudgeVerdict{}, 0, 0, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(config.JudgeTimeout)*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(endpoint.timeoutMs)*time.Millisecond)
 	defer cancel()
-	endpoint := config.JudgeBaseURL + "/v1/chat/completions"
-	if strings.HasSuffix(config.JudgeBaseURL, "/v1") {
-		endpoint = config.JudgeBaseURL + "/chat/completions"
+	requestURL := endpoint.baseURL + "/v1/chat/completions"
+	if strings.HasSuffix(endpoint.baseURL, "/v1") {
+		requestURL = endpoint.baseURL + "/chat/completions"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return JudgeVerdict{}, 0, 0, err
 	}
@@ -258,6 +309,9 @@ type JudgeTestRequest struct {
 	Rules     string   `json:"rules"`
 	Threshold float64  `json:"threshold"`
 	Prompt    string   `json:"prompt"`
+	// Reviewer tests the reviewer instead of the judge; the endpoint fields
+	// then stand for the reviewer's.
+	Reviewer bool `json:"reviewer"`
 }
 
 type JudgeTestResult struct {
@@ -267,21 +321,26 @@ type JudgeTestResult struct {
 	Error     string        `json:"error,omitempty"`
 }
 
-// TestJudge runs the judge on a sample with the unsaved form values; empty
-// fields fall back to the saved config. Nothing is cached or recorded.
+// TestJudge runs the judge or the reviewer on a sample with the unsaved form
+// values; empty fields fall back to the saved config. The sample is masked
+// like live traffic. Nothing is cached or recorded.
 func TestJudge(ctx context.Context, req JudgeTestRequest) JudgeTestResult {
 	config := *operation_setting.GetContentModerationConfig()
+	keys, baseURL, model, timeout := &config.JudgeAPIKeys, &config.JudgeBaseURL, &config.JudgeModel, &config.JudgeTimeout
+	if req.Reviewer {
+		keys, baseURL, model, timeout = &config.ReviewAPIKeys, &config.ReviewBaseURL, &config.ReviewModel, &config.ReviewTimeout
+	}
 	if len(req.APIKeys) > 0 {
-		config.JudgeAPIKeys = req.APIKeys
+		*keys = req.APIKeys
 	}
 	if req.BaseURL != "" {
-		config.JudgeBaseURL = req.BaseURL
+		*baseURL = req.BaseURL
 	}
 	if req.Model != "" {
-		config.JudgeModel = req.Model
+		*model = req.Model
 	}
 	if req.TimeoutMs > 0 {
-		config.JudgeTimeout = req.TimeoutMs
+		*timeout = req.TimeoutMs
 	}
 	if strings.TrimSpace(req.Rules) != "" {
 		config.JudgeRules = req.Rules
@@ -290,11 +349,15 @@ func TestJudge(ctx context.Context, req JudgeTestRequest) JudgeTestResult {
 		config.JudgeThreshold = req.Threshold
 	}
 	config.Normalize()
-	if len(config.JudgeAPIKeys) == 0 {
+	endpoint := judgeEndpointOf(&config)
+	if req.Reviewer {
+		endpoint = reviewEndpointOf(&config)
+	}
+	if len(endpoint.keys) == 0 {
 		return JudgeTestResult{Error: errNoJudgeKey.Error()}
 	}
-	key := config.JudgeAPIKeys[0]
-	verdict, status, latency, err := requestJudge(ctx, &config, key, strings.TrimSpace(req.Prompt))
+	key := endpoint.keys[0]
+	verdict, status, latency, err := requestJudge(ctx, config.JudgeRules, endpoint, key, RedactModerationSecrets(strings.TrimSpace(req.Prompt)))
 	recordModerationKeyOutcome(key, status, latency, err, false, true)
 	result := JudgeTestResult{LatencyMs: latency.Milliseconds()}
 	if err != nil {

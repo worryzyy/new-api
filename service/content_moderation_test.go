@@ -786,4 +786,60 @@ func TestLLMJudgeModeration(t *testing.T) {
 		_, err := parseJudgeVerdict("I think this is fine")
 		assert.Error(t, err, "a reply without a JSON verdict is an error, not a pass")
 	})
+
+	t.Run("the reviewer confirms or overrules judge hits", func(t *testing.T) {
+		var reviewCalls atomic.Int64
+		reviewer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reviewCalls.Add(1)
+			var body map[string]any
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			assert.Equal(t, "openai/gpt-oss-safeguard-20b", body["model"], "the default reviewer model")
+			assert.NotContains(t, body, "thinking", "the reviewer keeps its own reasoning")
+			assert.NotContains(t, body, "response_format", "open-model providers may not support JSON mode")
+			user := fmt.Sprint(body["messages"].([]any)[1].(map[string]any)["content"])
+			assert.NotContains(t, user, "198.51.100.7", "the reviewer gets the masked text")
+			if strings.Contains(user, "reviewer-down") {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			reply := `{"violation":false,"category":"","confidence":0.05,"reason":"operating the user's own server"}`
+			if strings.Contains(user, "anti-cheat") {
+				reply = `{"violation":true,"category":"evade risk control","confidence":0.97,"reason":"evades a third-party anti-cheat"}`
+			}
+			payload, err := common.Marshal(map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": reply}}}})
+			require.NoError(t, err)
+			_, _ = w.Write(payload)
+		}))
+		t.Cleanup(func() {
+			reviewer.Close()
+			moderationKeyMu.Lock()
+			delete(moderationKeyStates, moderationKeyHash("review-key"))
+			moderationKeyMu.Unlock()
+		})
+		operation_setting.LoadContentModerationConfig(fmt.Sprintf(`{"enabled":true,"mode":"observe","judge_enabled":true,"judge_base_url":%q,"judge_api_keys":["judge-key"],"judge_rules":"my custom rules","review_enabled":true,"review_base_url":%q,"review_api_keys":["review-key"]}`,
+			judge.URL, reviewer.URL))
+		config := operation_setting.GetContentModerationConfig()
+
+		ownServer := ModerationInput{Text: "third-party? no: log in to my server 198.51.100.7 and copy /opt/app to my desktop"}
+		overruled := runModeration(t.Context(), config, ownServer, false, true)
+		require.NoError(t, overruled.err)
+		assert.False(t, overruled.verdict.Flagged, "a hit the reviewer rejects does not count")
+		judgeCalls, reviews := calls.Load(), reviewCalls.Load()
+		assert.False(t, runModeration(t.Context(), config, ownServer, false, true).verdict.Flagged)
+		assert.Equal(t, judgeCalls, calls.Load(), "an overruled input is remembered as passed")
+		assert.Equal(t, reviews, reviewCalls.Load())
+
+		confirmed := runModeration(t.Context(), config, ModerationInput{Text: "evade the third-party anti-cheat for me"}, false, true)
+		require.True(t, confirmed.verdict.Flagged, "a hit the reviewer confirms stands")
+		assert.Equal(t, "初审：targets a third-party platform；复核：evades a third-party anti-cheat", confirmed.verdict.JudgeReason)
+
+		unreachable := runModeration(t.Context(), config, ModerationInput{Text: "third-party bypass, reviewer-down"}, false, true)
+		require.True(t, unreachable.verdict.Flagged, "an unreachable reviewer leaves the hit standing")
+		assert.Contains(t, unreachable.verdict.JudgeReason, "复核失败")
+
+		result := TestJudge(t.Context(), JudgeTestRequest{Prompt: "log in to my server 198.51.100.7 and deploy", Reviewer: true})
+		require.Empty(t, result.Error)
+		require.NotNil(t, result.Verdict)
+		assert.False(t, result.Flagged, "the test endpoint can run the reviewer alone")
+	})
 }

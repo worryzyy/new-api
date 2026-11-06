@@ -7720,6 +7720,20 @@
     "Total credited": "Total crédité",
     "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "Ajoutez {{amount}} pour atteindre le palier {{tier}} : {{bonus}} de bonus",
     "Top tier reached": "Palier maximal atteint",
-    "Drag to choose an amount": "Faites glisser pour choisir un montant"
+    "Drag to choose an amount": "Faites glisser pour choisir un montant",
+    "Second-pass review": "Seconde vérification",
+    "Review judge hits": "Revérifier les détections du juge",
+    "Each judge hit is checked again by a policy model such as gpt-oss-safeguard under the same rules and threshold. A hit counts only when the reviewer agrees; it stands if the reviewer cannot be reached.": "Chaque détection du juge est revérifiée par un modèle de politique comme gpt-oss-safeguard, avec les mêmes règles et le même seuil. Elle ne compte que si le vérificateur confirme ; elle est conservée s’il est injoignable.",
+    "OpenAI-compatible endpoint, for example https://openrouter.ai/api or https://api.groq.com/openai.": "Point de terminaison compatible OpenAI, par exemple https://openrouter.ai/api ou https://api.groq.com/openai.",
+    "Review model": "Modèle de vérification",
+    "The reviewer reasons before answering, so allow more time than the judge.": "Le vérificateur raisonne avant de répondre : prévoyez plus de temps que pour le juge.",
+    "Review API keys": "Clés API de vérification",
+    "No review API key configured": "Aucune clé API de vérification configurée",
+    "The reviewer is enabled but has no API key.": "La vérification est activée mais aucune clé API n’est définie.",
+    "{{reviewed}} reviewed, {{overruled}} overruled, {{errors}} review errors": "{{reviewed}} vérifiées, {{overruled}} annulées, {{errors}} erreurs de vérification",
+    "Test reviewer": "Tester le vérificateur",
+    "Reviewer": "Vérificateur",
+    "Judge": "Juge",
+    "Invalid review API base URL": "URL de base de l’API de vérification invalide"
   }
 }

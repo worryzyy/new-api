@@ -67,6 +67,12 @@ const savedConfig: ModerationConfigView = {
   judge_count_toward_ban: false,
   judge_api_key_statuses: [],
   judge_default_rules: 'default rules',
+  review_enabled: true,
+  review_base_url: 'https://openrouter.ai/api',
+  review_model: 'openai/gpt-oss-safeguard-20b',
+  review_api_keys: [],
+  review_timeout_ms: 20000,
+  review_api_key_statuses: [],
   api_key_configured: true,
   api_key_count: 1,
   api_key_masks: ['********OMkA'],
@@ -115,6 +121,23 @@ describe('buildConfigUpdate', () => {
       judge_new_api_keys: ' sk-judge \n',
     })
     expect(replaced.judge_api_keys).toEqual(['sk-judge'])
+  })
+
+  it('keeps saved review keys unless new ones are entered and sends the reviewer endpoint', () => {
+    const values = formValuesFromConfig(savedConfig)
+    expect(values.review_timeout_ms).toBe(20000)
+
+    const kept = buildConfigUpdate(values)
+    expect(kept.review_enabled).toBe(true)
+    expect(kept.review_model).toBe('openai/gpt-oss-safeguard-20b')
+    expect(kept.review_api_keys).toEqual([])
+    expect(kept.clear_review_api_keys).toBe(false)
+
+    const replaced = buildConfigUpdate({
+      ...values,
+      review_new_api_keys: ' sk-or-review \n',
+    })
+    expect(replaced.review_api_keys).toEqual(['sk-or-review'])
   })
 
   it('sends new keys and drops scope lists that do not apply', () => {

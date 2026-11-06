@@ -7720,6 +7720,20 @@
     "Total credited": "預計到帳合計",
     "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "再儲 {{amount}} 升至 {{tier}} 檔，加贈 {{bonus}}",
     "Top tier reached": "已達到最高檔位",
-    "Drag to choose an amount": "拖動滑桿選擇金額"
+    "Drag to choose an amount": "拖動滑桿選擇金額",
+    "Second-pass review": "複核",
+    "Review judge hits": "複核裁判命中",
+    "Each judge hit is checked again by a policy model such as gpt-oss-safeguard under the same rules and threshold. A hit counts only when the reviewer agrees; it stands if the reviewer cannot be reached.": "每次裁判命中都會交給 gpt-oss-safeguard 等策略模型，依相同規則與門檻再判一次。複核也判違規才算命中；複核模型無法使用時保留原命中。",
+    "OpenAI-compatible endpoint, for example https://openrouter.ai/api or https://api.groq.com/openai.": "OpenAI 相容介面，例如 https://openrouter.ai/api 或 https://api.groq.com/openai。",
+    "Review model": "複核模型",
+    "The reviewer reasons before answering, so allow more time than the judge.": "複核模型會先推理再作答，逾時應比裁判更長。",
+    "Review API keys": "複核 API 金鑰",
+    "No review API key configured": "未設定複核 API 金鑰",
+    "The reviewer is enabled but has no API key.": "已開啟複核，但沒有 API 金鑰。",
+    "{{reviewed}} reviewed, {{overruled}} overruled, {{errors}} review errors": "複核 {{reviewed}} 次，推翻 {{overruled}} 次，複核出錯 {{errors}} 次",
+    "Test reviewer": "測試複核模型",
+    "Reviewer": "複核",
+    "Judge": "裁判",
+    "Invalid review API base URL": "複核 API 位址無效"
   }
 }

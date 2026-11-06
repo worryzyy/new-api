@@ -19,7 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 import { useFormContext } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
-import { StatusBadge } from '@/components/status-badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -48,12 +47,12 @@ import {
 import type { ModerationConfigView, ModerationStatus } from '../../api'
 import {
   MAX_JUDGE_RULE_CHARS,
-  splitLines,
   type ModerationFormValues,
 } from '../../lib/config-form'
-import { keyStatusBadge } from '../../lib/display'
+import { ChatKeySection } from './chat-key-section'
 import { NumberField, SwitchField } from './fields'
 import { JudgeTestPanel } from './judge-test-panel'
+import { ReviewSection } from './review-section'
 
 export function JudgeTab(props: {
   config: ModerationConfigView
@@ -62,10 +61,7 @@ export function JudgeTab(props: {
   const { t } = useTranslation()
   const form = useFormContext<ModerationFormValues>()
   const enabled = form.watch('judge_enabled')
-  const clearKeys = form.watch('clear_judge_api_keys')
-  const newKeys = splitLines(form.watch('judge_new_api_keys'))
   const rulesLength = form.watch('judge_rules').length
-  const savedKeys = props.config.judge_api_key_statuses ?? []
   const modeItems = [
     { value: 'observe', label: t('Observe only') },
     { value: 'pre_block', label: t('Pre-block') },
@@ -181,90 +177,16 @@ export function JudgeTab(props: {
         />
       </SettingsFormGrid>
 
-      <section className='flex flex-col gap-3 rounded-lg border p-4'>
-        <h4 className='text-sm font-medium'>{t('Judge API keys')}</h4>
-        {savedKeys.length === 0 && (
-          <p className='text-muted-foreground text-sm'>
-            {t('No judge API key configured')}
-          </p>
-        )}
-        {savedKeys.map((status) => {
-          const badge = keyStatusBadge(status.status, t)
-          return (
-            <div
-              key={status.key_hash}
-              className='bg-muted/40 flex flex-wrap items-center gap-2 rounded-lg px-3 py-2'
-            >
-              <span
-                className={
-                  clearKeys
-                    ? 'font-mono text-sm line-through'
-                    : 'font-mono text-sm'
-                }
-              >
-                {status.masked}
-              </span>
-              <StatusBadge
-                label={badge.label}
-                variant={badge.variant}
-                copyable={false}
-              />
-              {status.last_error && (
-                <span className='text-destructive text-xs break-words'>
-                  {status.last_error}
-                </span>
-              )}
-            </div>
-          )
-        })}
-        <FormField
-          control={form.control}
-          name='judge_new_api_keys'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('New keys, one per line')}</FormLabel>
-              <FormControl>
-                <Textarea
-                  rows={3}
-                  autoComplete='off'
-                  spellCheck={false}
-                  className='font-mono text-xs'
-                  placeholder='sk-...'
-                  {...field}
-                />
-              </FormControl>
-              <FormDescription>
-                {t(
-                  '{{input}} entered / {{saved}} saved. Entered keys replace the saved keys; leave empty to keep them.',
-                  { input: newKeys.length, saved: savedKeys.length }
-                )}
-              </FormDescription>
-            </FormItem>
-          )}
-        />
-        <div>
-          <Button
-            type='button'
-            size='sm'
-            variant={clearKeys ? 'destructive' : 'outline'}
-            disabled={savedKeys.length === 0}
-            onClick={() =>
-              form.setValue('clear_judge_api_keys', !clearKeys, {
-                shouldDirty: true,
-              })
-            }
-          >
-            {clearKeys ? t('Keys will be cleared on save') : t('Clear keys')}
-          </Button>
-        </div>
-        {enabled && savedKeys.length === 0 && newKeys.length === 0 && (
-          <Alert variant='destructive'>
-            <AlertDescription>
-              {t('The judge is enabled but has no API key.')}
-            </AlertDescription>
-          </Alert>
-        )}
-      </section>
+      <ChatKeySection
+        title={t('Judge API keys')}
+        emptyText={t('No judge API key configured')}
+        missingKeyText={t('The judge is enabled but has no API key.')}
+        enabled={enabled}
+        savedKeys={props.config.judge_api_key_statuses ?? []}
+        newKeysName='judge_new_api_keys'
+        clearName='clear_judge_api_keys'
+      />
+      <ReviewSection config={props.config} />
 
       <FormField
         control={form.control}
@@ -314,6 +236,8 @@ export function JudgeTab(props: {
               latency: props.status.judge_avg_latency_ms ?? 0,
             }
           )}
+          {props.status.review_enabled &&
+            ` · ${t('{{reviewed}} reviewed, {{overruled}} overruled, {{errors}} review errors', { reviewed: props.status.review_checked ?? 0, overruled: props.status.review_overruled ?? 0, errors: props.status.review_errors ?? 0 })}`}
         </p>
       )}
       <JudgeTestPanel />

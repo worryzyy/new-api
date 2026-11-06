@@ -38,6 +38,8 @@ const (
 	contentModerationMaxSessionBlockTTL = 30 * 86400
 
 	contentModerationMaxJudgeRuleRunes = 8000
+	// A reasoning reviewer needs more time than the judge.
+	contentModerationMaxReviewTimeoutMs = 60000
 )
 
 // DefaultContentModerationJudgeRules is the policy the LLM judge applies when
@@ -177,6 +179,15 @@ type ContentModerationConfig struct {
 	// JudgeCountTowardBan lets judge hits count toward automatic bans; while it
 	// is off they are recorded only.
 	JudgeCountTowardBan bool `json:"judge_count_toward_ban"`
+
+	// The reviewer re-checks each judge hit with a policy model such as
+	// gpt-oss-safeguard under the same rules and threshold; a hit stands
+	// only when the reviewer agrees or cannot be reached.
+	ReviewEnabled bool     `json:"review_enabled"`
+	ReviewBaseURL string   `json:"review_base_url"`
+	ReviewModel   string   `json:"review_model"`
+	ReviewAPIKeys []string `json:"review_api_keys"`
+	ReviewTimeout int      `json:"review_timeout_ms"`
 }
 
 func DefaultContentModerationConfig() ContentModerationConfig {
@@ -218,6 +229,11 @@ func DefaultContentModerationConfig() ContentModerationConfig {
 		JudgeTimeout:   8000,
 		JudgeRules:     DefaultContentModerationJudgeRules,
 		JudgeThreshold: 0.8,
+
+		ReviewBaseURL: "https://openrouter.ai/api",
+		ReviewModel:   "openai/gpt-oss-safeguard-20b",
+		ReviewAPIKeys: []string{},
+		ReviewTimeout: 20000,
 	}
 }
 
@@ -349,6 +365,19 @@ func (c *ContentModerationConfig) Normalize() {
 	if c.JudgeThreshold <= 0 || c.JudgeThreshold > 1 {
 		c.JudgeThreshold = defaults.JudgeThreshold
 	}
+	c.ReviewBaseURL = strings.TrimRight(strings.TrimSpace(c.ReviewBaseURL), "/")
+	if c.ReviewBaseURL == "" {
+		c.ReviewBaseURL = defaults.ReviewBaseURL
+	}
+	c.ReviewModel = strings.TrimSpace(c.ReviewModel)
+	if c.ReviewModel == "" {
+		c.ReviewModel = defaults.ReviewModel
+	}
+	c.ReviewAPIKeys = uniqueTrimmed(c.ReviewAPIKeys, false)
+	if c.ReviewTimeout <= 0 {
+		c.ReviewTimeout = defaults.ReviewTimeout
+	}
+	c.ReviewTimeout = min(c.ReviewTimeout, contentModerationMaxReviewTimeoutMs)
 }
 
 // Validate rejects values an administrator submitted that cannot be applied.
@@ -371,7 +400,8 @@ func (c *ContentModerationConfig) Validate() error {
 		c.ViolationWindowHours < 0 || c.ViolationWindowHours > 8760 || c.HitRetentionDays < 0 || c.HitRetentionDays > 3650 ||
 		c.NonHitRetentionDays < 0 || c.NonHitRetentionDays > 3 ||
 		c.CyberSessionBlockTTLSeconds < 0 || c.CyberSessionBlockTTLSeconds > contentModerationMaxSessionBlockTTL ||
-		c.JudgeTimeout < 0 || c.JudgeTimeout > 30000 || c.JudgeThreshold < 0 || c.JudgeThreshold > 1 {
+		c.JudgeTimeout < 0 || c.JudgeTimeout > 30000 || c.JudgeThreshold < 0 || c.JudgeThreshold > 1 ||
+		c.ReviewTimeout < 0 || c.ReviewTimeout > contentModerationMaxReviewTimeoutMs {
 		return common.NewMessage("Moderation setting is out of range")
 	}
 	switch c.JudgeMode {
@@ -383,6 +413,12 @@ func (c *ContentModerationConfig) Validate() error {
 		parsed, err := url.ParseRequestURI(baseURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return common.NewMessage("Invalid judge API base URL")
+		}
+	}
+	if baseURL := strings.TrimSpace(c.ReviewBaseURL); baseURL != "" {
+		parsed, err := url.ParseRequestURI(baseURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return common.NewMessage("Invalid review API base URL")
 		}
 	}
 	if utf8.RuneCountInString(c.JudgeRules) > contentModerationMaxJudgeRuleRunes {

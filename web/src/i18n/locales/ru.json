@@ -7720,6 +7720,20 @@
     "Total credited": "Итого будет зачислено",
     "Add {{amount}} more to reach the {{tier}} tier: {{bonus}} bonus": "Добавьте {{amount}}, чтобы достичь уровня {{tier}}: бонус {{bonus}}",
     "Top tier reached": "Достигнут максимальный уровень",
-    "Drag to choose an amount": "Перетащите, чтобы выбрать сумму"
+    "Drag to choose an amount": "Перетащите, чтобы выбрать сумму",
+    "Second-pass review": "Повторная проверка",
+    "Review judge hits": "Перепроверять срабатывания судьи",
+    "Each judge hit is checked again by a policy model such as gpt-oss-safeguard under the same rules and threshold. A hit counts only when the reviewer agrees; it stands if the reviewer cannot be reached.": "Каждое срабатывание судьи повторно проверяется моделью политик, например gpt-oss-safeguard, по тем же правилам и порогу. Оно засчитывается, только если проверка согласна; если проверяющая модель недоступна, срабатывание сохраняется.",
+    "OpenAI-compatible endpoint, for example https://openrouter.ai/api or https://api.groq.com/openai.": "OpenAI-совместимый адрес, например https://openrouter.ai/api или https://api.groq.com/openai.",
+    "Review model": "Модель проверки",
+    "The reviewer reasons before answering, so allow more time than the judge.": "Проверяющая модель рассуждает перед ответом, поэтому дайте ей больше времени, чем судье.",
+    "Review API keys": "API-ключи проверки",
+    "No review API key configured": "API-ключ проверки не настроен",
+    "The reviewer is enabled but has no API key.": "Проверка включена, но API-ключ не задан.",
+    "{{reviewed}} reviewed, {{overruled}} overruled, {{errors}} review errors": "проверено {{reviewed}}, отменено {{overruled}}, ошибок проверки {{errors}}",
+    "Test reviewer": "Проверить модель проверки",
+    "Reviewer": "Проверка",
+    "Judge": "Судья",
+    "Invalid review API base URL": "Неверный базовый URL API проверки"
   }
 }
