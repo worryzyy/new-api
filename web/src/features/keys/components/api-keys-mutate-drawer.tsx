@@ -196,8 +196,8 @@ export function ApiKeysMutateDrawer({
       ? Number(autoGroupsData?.data?.max_count)
       : 5
   const schema = useMemo(
-    () => getApiKeyFormSchema(t, maxAutoGroups),
-    [t, maxAutoGroups]
+    () => getApiKeyFormSchema(t, maxAutoGroups, !isUpdate),
+    [t, maxAutoGroups, isUpdate]
   )
 
   const form = useForm<ApiKeyFormValues>({

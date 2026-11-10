@@ -56,6 +56,10 @@ type ApiKeyGroupComboboxProps = {
   onValueChange: (value: string) => void
   placeholder?: string
   disabled?: boolean
+  // Supplied by FormControl so the trigger is labelled and reports errors.
+  id?: string
+  'aria-invalid'?: boolean
+  'aria-describedby'?: string
 }
 
 export function ApiKeyGroupCombobox({
@@ -64,6 +68,7 @@ export function ApiKeyGroupCombobox({
   onValueChange,
   placeholder,
   disabled,
+  ...fieldProps
 }: ApiKeyGroupComboboxProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -102,6 +107,9 @@ export function ApiKeyGroupCombobox({
             variant='outline'
             role='combobox'
             aria-expanded={open}
+            id={fieldProps.id}
+            aria-invalid={fieldProps['aria-invalid']}
+            aria-describedby={fieldProps['aria-describedby']}
             data-auto-group-effect={isAutoSelected ? 'trigger' : undefined}
             disabled={disabled}
             className={cn(

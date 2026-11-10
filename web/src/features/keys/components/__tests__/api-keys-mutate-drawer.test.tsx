@@ -49,11 +49,16 @@ const originalGet = apiClient.get
 const originalPost = apiClient.post
 let renderedDrawer: RenderedDrawer | null = null
 
-function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
+function installApiFixtures(
+  createdPayloads: Array<Record<string, unknown>>,
+  defaultUseAutoGroup = true
+) {
   apiClient.get = async (url) => {
     switch (url) {
       case '/api/status':
-        return { data: { data: { default_use_auto_group: true } } }
+        return {
+          data: { data: { default_use_auto_group: defaultUseAutoGroup } },
+        }
       case '/api/user/models':
         return { data: { success: true, data: [] } }
       case '/api/user/self/groups':
@@ -86,14 +91,14 @@ function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
   }
 }
 
-async function renderCreateDrawer(): Promise<void> {
+async function renderCreateDrawer(defaultUseAutoGroup = true): Promise<void> {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   const freshAt = Date.now() + 60_000
   queryClient.setQueryData(
     ['status'],
-    { default_use_auto_group: true },
+    { default_use_auto_group: defaultUseAutoGroup },
     { updatedAt: freshAt }
   )
   queryClient.setQueryData(
@@ -422,5 +427,27 @@ describe('API keys mutate drawer user quota query switch', () => {
     fireEvent.click(findButton('Save changes', true))
     await waitFor(() => expect(createdPayloads).toHaveLength(1))
     expect(createdPayloads[0]?.allow_user_quota_query).toBe(false)
+  })
+})
+
+describe('API keys mutate drawer group selection', () => {
+  test('blocks creating a key until a group is chosen when Auto is not preselected', async () => {
+    const createdPayloads: Array<Record<string, unknown>> = []
+    installApiFixtures(createdPayloads, false)
+    await renderCreateDrawer(false)
+
+    const groupTrigger = getControlByLabel('Group')
+    expect(groupTrigger.textContent?.includes('Select a group')).toBe(true)
+
+    changeInput(getControlByLabel('Name'), 'needs-group')
+    fireEvent.click(findButton('Save changes', true))
+    expect(await screen.findByText('Please select a group')).toBeVisible()
+    expect(groupTrigger).toHaveAttribute('aria-invalid', 'true')
+    expect(createdPayloads).toHaveLength(0)
+
+    selectComboboxOption(groupTrigger, 'Standard access')
+    fireEvent.click(findButton('Save changes', true))
+    await waitFor(() => expect(createdPayloads).toHaveLength(1))
+    expect(createdPayloads[0]?.group).toBe('default')
   })
 })

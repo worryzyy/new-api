@@ -28,7 +28,15 @@ import type { ApiKey, ApiKeyFormData } from '../types'
 // Form Schema
 // ============================================================================
 
-export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
+/**
+ * New API keys must pick a group explicitly; an empty group would silently
+ * fall back to the user's own group. Existing keys keep a stored empty group.
+ */
+export function getApiKeyFormSchema(
+  t: TFunction,
+  maxAutoGroups = 5,
+  requireGroup = false
+) {
   const autoGroupLimit =
     Number.isInteger(maxAutoGroups) && maxAutoGroups > 0 ? maxAutoGroups : 5
 
@@ -48,6 +56,14 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
+      if (requireGroup && !data.group) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['group'],
+          message: t('Please select a group'),
+        })
+      }
+
       if (data.group === 'auto') {
         if (
           data.auto_groups_mode === 'custom' &&
